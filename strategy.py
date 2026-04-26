@@ -1,15 +1,19 @@
 """
-v13 CPR Strategy — Core Logic
-==============================
-All zone classification, signal generation, and trade simulation logic.
-Matches backtested v13 exactly.
+CPR Strategy v17a + Intraday v2 — Core Logic
+=============================================
+Zone classification, signal generation, intraday break detection,
+and live trade state management.
 """
 
 import numpy as np
-from config import STRIKE_INT, LOT_SIZE
+import pandas as pd
+from datetime import timedelta
+from config import STRIKE_INT, LOT_SIZE, V17A_PARAMS, INTRADAY_PARAMS
+
 
 def r2(v):
     return round(float(v), 2)
+
 
 # ── Pivot / CPR calculation ────────────────────────────────────────
 def compute_pivots(h, l, c):
@@ -27,6 +31,13 @@ def compute_pivots(h, l, c):
     return dict(pp=pp, bc=bc, tc=tc, r1=r1, r2=r2_, r3=r3, r4=r4,
                 s1=s1, s2=s2_, s3=s3, s4=s4)
 
+
+def compute_ema(closes, period=20):
+    """Compute EMA on a list/array of closes. Returns last value."""
+    s = pd.Series(closes)
+    return round(s.ewm(span=period, adjust=False).mean().iloc[-1], 2)
+
+
 def classify_zone(open_price, pvt, pdh, pdl):
     if   open_price > pvt['r4']: return 'above_r4'
     elif open_price > pvt['r3']: return 'r3_to_r4'
@@ -42,66 +53,113 @@ def classify_zone(open_price, pvt, pdh, pdl):
     elif open_price > pvt['s4']: return 's3_to_s4'
     else:                        return 'below_s4'
 
-def get_signal(zone, ema_bias):
-    """Returns 'CE', 'PE', or None."""
+
+def get_v17a_signal(zone, ema_bias):
+    """Returns 'CE', 'PE', or None based on v17a rules."""
     if zone in {'above_r4', 'r3_to_r4', 'r2_to_r3', 'r1_to_r2'}:
         return 'PE'
     if zone == 'pdh_to_r1'  and ema_bias == 'bear': return 'PE'
-    if zone == 'tc_to_pdh':                          return 'PE'   # spot SL for bear
+    if zone == 'tc_to_pdh':                          return 'PE'
     if zone == 'within_cpr' and ema_bias == 'bull':  return 'PE'
     if zone == 'within_cpr' and ema_bias == 'bear':  return 'CE'
     if zone == 'pdl_to_bc'  and ema_bias == 'bull':  return 'PE'
-    if zone in {'pdl_to_s1','s1_to_s2','s3_to_s4','below_s4'} and ema_bias == 'bear':
+    if zone in {'pdl_to_s1', 's1_to_s2', 's3_to_s4', 'below_s4'} and ema_bias == 'bear':
         return 'CE'
     return None
+
 
 def get_strike(atm, opt_type, stype):
     if opt_type == 'CE':
         return {'OTM1': atm + STRIKE_INT, 'ATM': atm, 'ITM1': atm - STRIKE_INT}[stype]
     return {'OTM1': atm - STRIKE_INT, 'ATM': atm, 'ITM1': atm + STRIKE_INT}[stype]
 
-# ── 3-tier lock-in trailing stop ───────────────────────────────────
-def check_trail(entry_price, current_price, max_decay, sl_level):
-    """
-    Update trailing SL based on decay milestone.
-    Returns new sl_level.
-    """
-    hard_sl = r2(entry_price * (1 + 0))   # placeholder, actual hsl set at entry
-    if   max_decay >= 0.60:
-        new_sl = r2(entry_price * (1 - max_decay * 0.95))
-        sl_level = min(sl_level, new_sl)
-    elif max_decay >= 0.40:
-        sl_level = min(sl_level, r2(entry_price * 0.80))
-    elif max_decay >= 0.25:
-        sl_level = min(sl_level, entry_price)
-    return sl_level
 
-# ── Live trade state manager ───────────────────────────────────────
+# ── Intraday v2: 5-min break detection ────────────────────────────
+def detect_intraday_break(ohlc_5m, pvt, pdh, pdl, scan_from='09:30', scan_to='10:25'):
+    """
+    Scan 5-min OHLC for first pivot level break in window.
+    Break confirmed when candle CLOSE crosses level for first time.
+    Previous candle must NOT have been beyond level.
+
+    ohlc_5m: DataFrame with DatetimeIndex and columns [open, high, low, close]
+
+    Returns dict {entry_dt, opt, level, level_name} or None.
+    """
+    up_levels = [
+        ('R1', pvt['r1'], 'PE'),
+        ('R2', pvt['r2'], 'PE'),
+        ('TC', pvt['tc'], 'PE'),
+    ]
+    dn_levels = [
+        ('PDL', pdl,       'CE'),
+        ('S1',  pvt['s1'], 'CE'),
+        ('S2',  pvt['s2'], 'CE'),
+    ]
+
+    scan = ohlc_5m.between_time(scan_from, scan_to)
+    if len(scan) < 2:
+        return None
+
+    candles = scan.reset_index()
+    for idx in range(1, len(candles)):
+        row      = candles.iloc[idx]
+        prev_row = candles.iloc[idx - 1]
+        c_close  = row['close']
+        p_close  = prev_row['close']
+        c_time   = row.iloc[0]   # DatetimeIndex column
+
+        entry_dt = c_time + timedelta(minutes=5, seconds=2)
+        if entry_dt.strftime('%H:%M') > '13:00':
+            break
+
+        for name, level, opt in up_levels:
+            if p_close <= level < c_close:
+                return dict(entry_dt=entry_dt, opt=opt, level=level, level_name=name)
+
+        for name, level, opt in dn_levels:
+            if p_close >= level > c_close:
+                return dict(entry_dt=entry_dt, opt=opt, level=level, level_name=name)
+
+    return None
+
+
+# ── 3-tier lock-in trailing stop ───────────────────────────────────
 class TradeState:
-    """Manages a single open option sell position."""
+    """Manages a single open short option position."""
 
     def __init__(self, entry_price, target_pct, sl_param, sl_type,
-                 pdh=None, spot_sl_level=None):
-        self.entry_price    = entry_price
-        self.target         = r2(entry_price * (1 - target_pct))
-        self.sl_type        = sl_type
+                 spot_sl_level=None):
+        self.entry_price   = entry_price
+        self.target        = r2(entry_price * (1 - target_pct))
+        self.sl_type       = sl_type
+        self.hard_sl       = r2(entry_price * (1 + sl_param)) if sl_type == 'pct' \
+                             else r2(entry_price * 5.0)
+        self.sl_level      = self.hard_sl
+        self.max_decay     = 0.0
+        self.spot_sl_level = spot_sl_level
+        self.is_open       = True
+        self.exit_reason   = None
+        self.exit_price    = None
+        self.trail_tier    = 0   # 0=none, 1=BE(25%), 2=80%(40%), 3=95%(60%)
 
-        if sl_type == 'pct':
-            self.hard_sl    = r2(entry_price * (1 + sl_param))
-        else:  # spot
-            self.hard_sl    = r2(entry_price * 5.0)   # very wide — spot handles exit
+    @property
+    def pnl(self):
+        if self.exit_price is None:
+            return None
+        return r2((self.entry_price - self.exit_price) * LOT_SIZE)
 
-        self.sl_level       = self.hard_sl
-        self.max_decay      = 0.0
-        self.spot_sl_level  = spot_sl_level   # PDH + buffer for tc_to_pdh bear PE
-        self.is_open        = True
-        self.exit_reason    = None
-        self.exit_price     = None
+    @property
+    def unrealised_pnl(self):
+        """P&L if closed at current price (call update first)."""
+        if self._current_price is None:
+            return None
+        return r2((self.entry_price - self._current_price) * LOT_SIZE)
 
     def update(self, option_price, spot_price=None):
         """
-        Call each tick/bar. Returns ('hold', None) or ('exit', reason).
+        Call on each tick/poll. Returns ('hold', None) or ('exit', reason).
         """
+        self._current_price = option_price
         if not self.is_open:
             return 'hold', None
 
@@ -109,39 +167,46 @@ class TradeState:
         if decay > self.max_decay:
             self.max_decay = decay
 
-        # Update trailing SL
-        self.sl_level = check_trail(self.entry_price, option_price,
-                                    self.max_decay, self.sl_level)
+        # Update trailing SL tier
+        if self.max_decay >= 0.60:
+            self.trail_tier = 3
+            self.sl_level = min(self.sl_level,
+                                r2(self.entry_price * (1 - self.max_decay * 0.95)))
+        elif self.max_decay >= 0.40:
+            self.trail_tier = max(self.trail_tier, 2)
+            self.sl_level = min(self.sl_level, r2(self.entry_price * 0.80))
+        elif self.max_decay >= 0.25:
+            self.trail_tier = max(self.trail_tier, 1)
+            self.sl_level = min(self.sl_level, self.entry_price)
 
-        # Target hit
+        # Target
         if option_price <= self.target:
-            self._close(option_price, 'target')
-            return 'exit', 'target'
+            return self._close(option_price, 'target')
 
-        # Option SL hit
+        # Option SL
         if option_price >= self.sl_level:
             rsn = 'lockin_sl' if self.sl_level < self.hard_sl else 'hard_sl'
-            self._close(option_price, rsn)
-            return 'exit', rsn
+            return self._close(option_price, rsn)
 
-        # Spot-based SL (tc_to_pdh bear PE: exit when spot >= PDH + buffer)
+        # Spot SL (tc_to_pdh bear PE)
         if self.sl_type == 'spot' and spot_price is not None:
             if spot_price >= self.spot_sl_level:
-                self._close(option_price, 'spot_sl')
-                return 'exit', 'spot_sl'
+                return self._close(option_price, 'spot_sl')
 
         return 'hold', None
 
     def eod_exit(self, option_price):
-        self._close(option_price, 'eod')
-        return 'exit', 'eod'
-
-    def pnl(self):
-        if self.exit_price is None:
-            return None
-        return r2((self.entry_price - self.exit_price) * LOT_SIZE)
+        return self._close(option_price, 'eod')
 
     def _close(self, price, reason):
         self.is_open     = False
         self.exit_price  = price
         self.exit_reason = reason
+        return 'exit', reason
+
+    def trail_label(self):
+        return {0: 'None', 1: 'Break-even (25%)',
+                2: '80% lock (40%)', 3: '95% lock (60%)'}[self.trail_tier]
+
+    def sl_pct_from_entry(self):
+        return r2((self.sl_level / self.entry_price - 1) * 100)

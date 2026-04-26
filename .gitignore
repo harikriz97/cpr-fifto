@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+config_local.py
+v17a_live.log
+data/live_trades.csv
+.streamlit/secrets.toml
