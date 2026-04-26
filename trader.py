@@ -200,6 +200,15 @@ def run_v17a(angel, oa, ctx, dry_run):
     atm     = int(round(spot / config.STRIKE_INT) * config.STRIKE_INT)
     strike  = get_strike(atm, ctx['signal'], stype)
     expiry  = get_nearest_expiry(angel, spot)
+
+    # tc_to_pdh DTE filter: WR=50%, avg=-82 on DTE=1 → fall through to intraday v2
+    expiry_dt = datetime.strptime(expiry, '%d%b%Y').date()
+    dte = (expiry_dt - date.today()).days
+    if ctx['zone'] == 'tc_to_pdh' and dte < config.TC_TO_PDH_DTE_MIN:
+        log.info(f"Skip tc_to_pdh DTE={dte} (min={config.TC_TO_PDH_DTE_MIN}) — running intraday v2")
+        run_intraday_v2(angel, oa, ctx, dry_run)
+        return
+
     symbol  = f"NIFTY{expiry}{strike}{ctx['signal']}"
     token   = angel.search_option_token(symbol)
     ep      = angel.get_option_ltp(token)

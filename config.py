@@ -22,6 +22,9 @@ EMA_PERIOD  = 20
 EOD_EXIT    = "15:20:00"
 IV_MIN      = 0.47
 BODY_MIN    = 0.10
+# tc_to_pdh on DTE=1 (expiry Thursday): WR=50%, avg=-82 → skip it
+# backtest shows DTE>=2 gives WR=63%, avg=+570 for this zone
+TC_TO_PDH_DTE_MIN = 2
 
 # ── Trading mode ───────────────────────────────────────────────────
 PAPER_TRADE = True
@@ -57,6 +60,8 @@ INTRADAY_PARAMS = {
     ("R2",  "PE"): ("ITM1", 0.50, 1.00),
     ("S1",  "CE"): ("ITM1", 0.30, 1.00),
     ("S2",  "CE"): ("OTM1", 0.40, 1.00),
+    # NOTE: TC break has WR=73% but RR is unfavourable (target=20%, SL=50% on OTM1).
+    # avg pnl=178 vs 950 for other levels. Needs re-backtest with ATM+30%/1.0 params.
     ("TC",  "PE"): ("OTM1", 0.20, 0.50),
 }
 
