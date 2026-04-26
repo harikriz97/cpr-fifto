@@ -5,7 +5,7 @@ Run at 09:10 every trading day (weekdays).
 
 Flow:
   1. Login Angel One + OpenAlgo
-  2. Fetch 45d OHLC → compute CPR, EMA(20), zone, signal
+  2. Fetch 50d OHLC → compute CPR, EMA(20), zone, signal
   3. If v17a signal → enter at zone's entry time, monitor until SL/target/EOD
   4. If no signal   → scan 5-min candles 09:35–10:30 for pivot break, enter on first break
 
@@ -80,7 +80,7 @@ def log_trade(**kw):
     os.makedirs('data', exist_ok=True)
     path   = 'data/live_trades.csv'
     fields = ['date','source','zone','bias','opt','symbol',
-              'entry_price','exit_price','exit_reason','pnl']
+              'entry_price','exit_price','exit_reason','pnl','dte']
     row = {f: kw.get(f, '') for f in fields}
     row['date'] = datetime.now().strftime('%Y-%m-%d')
     write_hdr = not os.path.exists(path)
@@ -229,14 +229,18 @@ def run_v17a(angel, oa, ctx, dry_run):
     log_trade(source='v17a', zone=ctx['zone'], bias=ctx['bias'],
               opt=ctx['signal'], symbol=symbol,
               entry_price=ep, exit_price=state.exit_price,
-              exit_reason=state.exit_reason, pnl=state.pnl)
+              exit_reason=state.exit_reason, pnl=state.pnl, dte=dte)
 
 
 # ── Intraday v2 scan ───────────────────────────────────────────────
 def run_intraday_v2(angel, oa, ctx, dry_run):
-    log.info("No v17a signal → starting intraday v2 scan (09:35→10:30)")
+    log.info(f"No v17a signal → intraday v2 scan "
+             f"({config.INTRADAY_SCAN_FROM}→{config.INTRADAY_SCAN_TO})")
     wait_until('09:30:00')
-    deadline = datetime.now().replace(hour=10, minute=30, second=5, microsecond=0)
+    # Deadline: last scan candle starts at INTRADAY_SCAN_TO, closes 5 min later
+    _h, _m = map(int, config.INTRADAY_SCAN_TO.split(':'))
+    deadline = (datetime.now().replace(hour=_h, minute=_m, second=0, microsecond=0)
+                + timedelta(minutes=5, seconds=5))
 
     brk = None
     while datetime.now() < deadline:
@@ -271,13 +275,16 @@ def run_intraday_v2(angel, oa, ctx, dry_run):
     spot   = angel.get_nifty_ltp()
     atm    = int(round(spot / config.STRIKE_INT) * config.STRIKE_INT)
     strike = get_strike(atm, brk['opt'], stype)
-    expiry = get_nearest_expiry(angel, spot)
-    symbol = f"NIFTY{expiry}{strike}{brk['opt']}"
-    token  = angel.search_option_token(symbol)
-    ep     = angel.get_option_ltp(token)
+    expiry    = get_nearest_expiry(angel, spot)
+    expiry_dt = datetime.strptime(expiry, '%d%b%Y').date()
+    dte       = (expiry_dt - date.today()).days
+    symbol    = f"NIFTY{expiry}{strike}{brk['opt']}"
+    token     = angel.search_option_token(symbol)
+    ep        = angel.get_option_ltp(token)
 
     state  = TradeState(ep, tgt_pct, sl_pct, 'pct')
-    log.info(f"Intraday SELL {symbol}  ep={ep}  target={state.target}  sl={state.hard_sl}")
+    log.info(f"Intraday SELL {symbol}  ep={ep}  target={state.target}"
+             f"  sl={state.hard_sl}  DTE={dte}")
     if not dry_run: oa.place_sell_order(symbol, config.LOT_SIZE)
 
     monitor_trade(angel, oa, symbol, token, state, 'pct', dry_run)
@@ -285,7 +292,7 @@ def run_intraday_v2(angel, oa, ctx, dry_run):
     log_trade(source='intraday_v2', zone=f"{brk['level_name']}_break", bias='—',
               opt=brk['opt'], symbol=symbol,
               entry_price=ep, exit_price=state.exit_price,
-              exit_reason=state.exit_reason, pnl=state.pnl)
+              exit_reason=state.exit_reason, pnl=state.pnl, dte=dte)
 
 
 # ── Main ───────────────────────────────────────────────────────────

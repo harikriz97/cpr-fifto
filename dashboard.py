@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime, date
-import os
+import os, glob
 
 # ── Page config ────────────────────────────────────────────────────
 st.set_page_config(
@@ -92,21 +92,34 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
 
 @st.cache_data(ttl=60)
 def load_backtest_trades():
-    v17a_path  = os.path.join(DATA_DIR, 'v17a_trades.csv')
-    intra_path = os.path.join(DATA_DIR, 'intraday_v2_trades.csv')
+    # Search dated subfolders (e.g. data/20260420/38_zone_v17a_trades.csv)
+    # then fall back to flat data/ folder for backwards compatibility
+    def latest(pattern):
+        hits = sorted(glob.glob(os.path.join(DATA_DIR, '*', pattern)))
+        flat = os.path.join(DATA_DIR, pattern.lstrip('*'))
+        if os.path.exists(flat):
+            hits.append(flat)
+        return hits[-1] if hits else None
+
+    v17a_path  = latest('*v17a_trades.csv')
+    intra_path = latest('*intraday_v2_trades.csv')
     dfs = []
-    if os.path.exists(v17a_path):
+    if v17a_path:
         df = pd.read_csv(v17a_path, parse_dates=['date'])
         df['source'] = 'v17a'
-        dfs.append(df[['date','source','zone','opt','entry_time','ep','xp','exit_reason','pnl']])
-    if os.path.exists(intra_path):
+        cols = ['date','source','zone','opt','entry_time','ep','xp','exit_reason','pnl']
+        if 'dte' in df.columns: cols.append('dte')
+        dfs.append(df[cols])
+    if intra_path:
         df = pd.read_csv(intra_path, parse_dates=['date'])
         df['source'] = 'intraday_v2'
         df = df.rename(columns={'break_name':'zone'})
-        dfs.append(df[['date','source','zone','opt','entry_time','ep','xp','exit_reason','pnl']])
+        cols = ['date','source','zone','opt','entry_time','ep','xp','exit_reason','pnl']
+        if 'dte' in df.columns: cols.append('dte')
+        dfs.append(df[cols])
     if not dfs:
         return pd.DataFrame()
-    return pd.concat(dfs).sort_values('date').reset_index(drop=True)
+    return pd.concat(dfs, ignore_index=True).sort_values('date').reset_index(drop=True)
 
 @st.cache_data(ttl=60)
 def load_live_trades():
@@ -446,13 +459,14 @@ elif page == "Performance":
         s = compute_stats(df)
 
         # KPI row
-        c1,c2,c3,c4,c5,c6 = st.columns(6)
+        c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
         c1.metric("Total P&L",    f"₹{s['total']:,.0f}")
         c2.metric("Trades",       f"{s['n']} ({s['n']/s['yrs']:.0f}/yr)")
         c3.metric("Win Rate",     f"{s['wr']}%")
         c4.metric("Profit Factor",f"{s['pf']}")
         c5.metric("Sharpe",       f"{s['sharpe']}")
-        c6.metric("Max Drawdown", f"₹{s['dd']:,.0f}")
+        c6.metric("Calmar",       f"{s['calmar']}")
+        c7.metric("Max Drawdown", f"₹{s['dd']:,.0f}")
 
         st.markdown('<hr class="sect">', unsafe_allow_html=True)
 
@@ -524,11 +538,12 @@ elif page == "Performance":
         # ── Monthly heatmap ───────────────────────────────────────
         st.markdown('<hr class="sect">', unsafe_allow_html=True)
         st.markdown("### Monthly P&L Heatmap")
+        _mnames = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',
+                   7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'}
         df['month'] = df['date'].dt.month
         monthly = df.groupby(['year','month'])['pnl'].sum().reset_index()
         pivot   = monthly.pivot(index='year', columns='month', values='pnl').fillna(0)
-        pivot.columns = ['Jan','Feb','Mar','Apr','May','Jun',
-                         'Jul','Aug','Sep','Oct','Nov','Dec'][:len(pivot.columns)]
+        pivot.columns = [_mnames[m] for m in pivot.columns]  # fix: map by actual month number
 
         fig_hm = go.Figure(go.Heatmap(
             z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
@@ -557,3 +572,56 @@ elif page == "Performance":
         src_grp['avg']   = src_grp['avg'].apply(lambda x: f"₹{x:,.0f}")
         src_grp['wr']    = src_grp['wr'].apply(lambda x: f"{x}%")
         st.dataframe(src_grp, use_container_width=True, hide_index=True)
+
+        # ── Zone performance bar chart ────────────────────────────
+        st.markdown('<hr class="sect">', unsafe_allow_html=True)
+        st.markdown("### Zone Performance")
+        zone_grp = df.groupby('zone').agg(
+            n=('pnl','count'),
+            total=('pnl','sum'),
+            avg=('pnl','mean'),
+            wr=('pnl', lambda x: round((x>0).mean()*100,1))
+        ).reset_index().sort_values('total', ascending=True)
+
+        col_zl, col_zr = st.columns(2)
+        with col_zl:
+            fig_z = go.Figure(go.Bar(
+                x=zone_grp['total'], y=zone_grp['zone'],
+                orientation='h',
+                marker_color=['#4ade80' if v >= 0 else '#f87171' for v in zone_grp['total']],
+                text=zone_grp['total'].apply(lambda x: f"₹{x:,.0f}"),
+                textposition='outside',
+            ))
+            fig_z.update_layout(
+                title=dict(text='Total P&L by Zone', font=dict(color='#e2e8f0', size=13)),
+                height=max(300, len(zone_grp) * 30),
+                plot_bgcolor='#0d0f14', paper_bgcolor='#131720',
+                font=dict(color='#94a3b8', size=10),
+                margin=dict(l=10, r=80, t=40, b=10),
+                xaxis=dict(tickprefix='₹', tickformat=',.0f', gridcolor='#1e2530'),
+                yaxis=dict(gridcolor='#1e2530'),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_z, use_container_width=True)
+
+        with col_zr:
+            zone_grp_wr = zone_grp.sort_values('wr', ascending=True)
+            fig_wr = go.Figure(go.Bar(
+                x=zone_grp_wr['wr'], y=zone_grp_wr['zone'],
+                orientation='h',
+                marker_color=['#4ade80' if v >= 65 else '#fbbf24' if v >= 50 else '#f87171'
+                              for v in zone_grp_wr['wr']],
+                text=zone_grp_wr['wr'].apply(lambda x: f"{x:.0f}%"),
+                textposition='outside',
+            ))
+            fig_wr.update_layout(
+                title=dict(text='Win Rate by Zone', font=dict(color='#e2e8f0', size=13)),
+                height=max(300, len(zone_grp_wr) * 30),
+                plot_bgcolor='#0d0f14', paper_bgcolor='#131720',
+                font=dict(color='#94a3b8', size=10),
+                margin=dict(l=10, r=60, t=40, b=10),
+                xaxis=dict(ticksuffix='%', gridcolor='#1e2530', range=[0, 110]),
+                yaxis=dict(gridcolor='#1e2530'),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_wr, use_container_width=True)
