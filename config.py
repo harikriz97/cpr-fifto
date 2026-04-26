@@ -60,12 +60,15 @@ INTRADAY_PARAMS = {
     ("R2",  "PE"): ("ITM1", 0.50, 1.00),
     ("S1",  "CE"): ("ITM1", 0.30, 1.00),
     ("S2",  "CE"): ("OTM1", 0.40, 1.00),
-    # NOTE: TC break has WR=73% but RR is unfavourable (target=20%, SL=50% on OTM1).
-    # avg pnl=178 vs 950 for other levels. Needs re-backtest with ATM+30%/1.0 params.
-    ("TC",  "PE"): ("OTM1", 0.20, 0.50),
+    # TC REMOVED: optimization backtest showed avg=-80 (negative) across all targets on OTM1.
+    # All targets 0.20-0.35 = negative avg; 0.40 = +50 (breakeven). Not worth trading.
+    # ("TC",  "PE"): ("OTM1", 0.20, 0.50),
 }
 
 # Intraday v2 scan window
-INTRADAY_SCAN_FROM = "09:30"   # first 5-min candle to check (closes at 09:35)
-INTRADAY_SCAN_TO   = "10:25"   # last  5-min candle to check (entry at 10:30:02)
+# Optimization test (50_intraday_v2_optimize.csv):
+#   10:25 baseline → 114 trades, total=+37538
+#   11:20 extended → 151 trades, total=+45656  (+8118 over 5yr, WR stable at 67%)
+INTRADAY_SCAN_FROM = "09:30"
+INTRADAY_SCAN_TO   = "11:20"   # extended from 10:25 — adds ~37 trades/5yr, +₹8118 pnl
 INTRADAY_EOD_EXIT  = "15:20:00"

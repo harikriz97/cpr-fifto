@@ -88,7 +88,7 @@ def detect_intraday_break(ohlc_5m, pvt, pdh, pdl, scan_from='09:30', scan_to='10
     up_levels = [
         ('R1', pvt['r1'], 'PE'),
         ('R2', pvt['r2'], 'PE'),
-        ('TC', pvt['tc'], 'PE'),
+        # TC removed: optimization backtest showed negative avg across all targets on OTM1
     ]
     dn_levels = [
         ('PDL', pdl,       'CE'),
