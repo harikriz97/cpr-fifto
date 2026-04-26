@@ -55,12 +55,17 @@ def wait_until(hhmm_ss: str):
 
 
 def get_nearest_expiry(angel: AngelOneClient, spot: float) -> str:
-    """Return nearest weekly expiry in Angel One format (e.g. '24APR2025')."""
+    """Return nearest weekly expiry in Angel One format (e.g. '24APR2025').
+    Skips DTE=0 (today is expiry Thursday) to avoid next-minute decay blowup.
+    """
     today = date.today()
     atm   = int(round(spot / config.STRIKE_INT) * config.STRIKE_INT)
     for delta in range(0, 30):
         d = today + timedelta(days=delta)
         if d.weekday() != 3:   # Thursday
+            continue
+        if d == today:         # FIX: skip DTE=0 — trade on next week's expiry
+            log.warning("Today is expiry Thursday (DTE=0) — skipping to next expiry")
             continue
         exp = d.strftime('%d%b%Y').upper()
         try:
@@ -86,53 +91,91 @@ def log_trade(**kw):
     log.info(f"Trade logged → pnl={row['pnl']}")
 
 
-# ── Morning signal ─────────────────────────────────────────────────
-def compute_morning_signal(angel: AngelOneClient) -> dict | None:
-    history = angel.get_nifty_ohlc_history(days=45)
+# ── Morning setup (09:10) — OHLC only, no LTP ─────────────────────
+def compute_morning_setup(angel: AngelOneClient) -> dict | None:
+    """
+    Fetch OHLC history and compute pivots + EMA.
+    Called at 09:10 BEFORE market opens — must NOT call get_nifty_ltp() here
+    because pre-market LTP = yesterday's close, giving wrong zone.
+    """
+    history = angel.get_nifty_ohlc_history(days=50)   # FIX: 50d for EMA seed
     if len(history) < 22:
         log.error("Insufficient OHLC history"); return None
 
-    prev   = history[-2]
-    closes = [d['close'] for d in history[:-1]]
-    pvt    = compute_pivots(prev['high'], prev['low'], prev['close'])
-    pdh    = r2(prev['high']); pdl = r2(prev['low'])
-    e20    = compute_ema(closes, config.EMA_PERIOD)
+    # FIX: validate history[-1] is today or skip it
+    today_str = date.today().strftime('%Y-%m-%d')
+    last_date = str(history[-1].get('date', ''))
+    if today_str in last_date:
+        # Angel One returned a partial today bar — use history[-2] as prev
+        prev    = history[-2]
+        closes  = [d['close'] for d in history[:-1]]
+    else:
+        # history[-1] is yesterday — normal case
+        prev    = history[-1]
+        closes  = [d['close'] for d in history]
 
-    spot_open = angel.get_nifty_ltp()
-    bias      = 'bull' if spot_open > e20 else 'bear'
-    zone      = classify_zone(spot_open, pvt, pdh, pdl)
-    signal    = get_v17a_signal(zone, bias)
-
+    pvt       = compute_pivots(prev['high'], prev['low'], prev['close'])
+    pdh       = r2(prev['high']); pdl = r2(prev['low'])
+    e20       = compute_ema(closes, config.EMA_PERIOD)
     prev_body = r2(abs(prev['close'] - prev['open']) / prev['open'] * 100)
-    if prev_body <= config.BODY_MIN:
-        log.info(f"Body filter fail: {prev_body}% — no signal")
+
+    log.info(f"Setup  PDH={pdh}  PDL={pdl}  PP={pvt['pp']}  "
+             f"TC={pvt['tc']}  EMA={e20}  Body={prev_body}%")
+
+    return dict(pvt=pvt, pdh=pdh, pdl=pdl, e20=e20, prev_body=prev_body)
+
+
+# ── Signal computation (09:15:02) — needs real open price ──────────
+def compute_signal(setup: dict, spot_open: float) -> dict:
+    """
+    Compute zone/bias/signal using actual 09:15 open price.
+    Called AFTER market opens to avoid pre-market LTP forward bias.
+    """
+    bias   = 'bull' if spot_open > setup['e20'] else 'bear'
+    zone   = classify_zone(spot_open, setup['pvt'], setup['pdh'], setup['pdl'])
+    signal = get_v17a_signal(zone, bias)
+
+    if setup['prev_body'] <= config.BODY_MIN:
+        log.info(f"Body filter fail: {setup['prev_body']}% — no signal")
         signal = None
 
     log.info(f"Zone={zone}  Bias={bias}  Signal={signal}  "
-             f"Open={spot_open:.2f}  EMA={e20:.2f}  Body={prev_body}%")
+             f"Open={spot_open:.2f}  EMA={setup['e20']:.2f}  Body={setup['prev_body']}%")
 
     return dict(zone=zone, bias=bias, signal=signal,
-                pvt=pvt, pdh=pdh, pdl=pdl,
-                spot_open=r2(spot_open), e20=e20)
+                pvt=setup['pvt'], pdh=setup['pdh'], pdl=setup['pdl'],
+                spot_open=r2(spot_open), e20=setup['e20'])
 
 
 # ── Monitor loop (shared by v17a + intraday v2) ────────────────────
 def monitor_trade(angel, oa, symbol, token, state: TradeState,
                   sl_type, dry_run):
     eod = datetime.now().replace(hour=15, minute=20, second=0, microsecond=0)
+    api_errors = 0
+    MAX_API_ERRORS = 5
+
     while True:
         time.sleep(POLL_SECS)
         now = datetime.now()
 
+        try:
+            cp   = angel.get_option_ltp(token)
+            spot = angel.get_nifty_ltp() if sl_type == 'spot' else None
+            api_errors = 0  # reset on success
+        except Exception as e:
+            api_errors += 1
+            log.warning(f"API error #{api_errors}: {e}")
+            if api_errors >= MAX_API_ERRORS:
+                log.error(f"Too many API errors — forcing EOD exit {symbol}")
+                break
+            continue
+
         if now >= eod:
-            cp = angel.get_option_ltp(token)
             state.eod_exit(cp)
             log.info(f"EOD exit {symbol}  cp={cp}  pnl=₹{state.pnl:,.0f}")
             if not dry_run: oa.squareoff(symbol, config.LOT_SIZE)
             break
 
-        cp    = angel.get_option_ltp(token)
-        spot  = angel.get_nifty_ltp() if sl_type == 'spot' else None
         act, reason = state.update(cp, spot)
 
         log.debug(f"{symbol}  cp={cp}  trail={state.trail_label()}"
@@ -256,10 +299,12 @@ def main():
     oa = OpenAlgoClient()
 
     wait_until('09:10:00')
-    ctx = compute_morning_signal(angel)
-    if ctx is None: return
+    setup = compute_morning_setup(angel)   # OHLC + EMA only — no LTP here
+    if setup is None: return
 
     wait_until('09:15:02')
+    spot_open = angel.get_nifty_ltp()     # FIX: real open after market starts
+    ctx = compute_signal(setup, spot_open)
 
     if ctx['signal']:
         run_v17a(angel, oa, ctx, args.dry_run)
