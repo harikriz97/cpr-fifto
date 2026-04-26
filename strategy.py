@@ -101,16 +101,15 @@ def detect_intraday_break(ohlc_5m, pvt, pdh, pdl, scan_from='09:30', scan_to='10
         return None
 
     candles = scan.reset_index()
+    ts_col  = candles.columns[0]   # name of the reset index column (robust)
     for idx in range(1, len(candles)):
         row      = candles.iloc[idx]
         prev_row = candles.iloc[idx - 1]
         c_close  = row['close']
         p_close  = prev_row['close']
-        c_time   = row.iloc[0]   # DatetimeIndex column
+        c_time   = row[ts_col]
 
         entry_dt = c_time + timedelta(minutes=5, seconds=2)
-        if entry_dt.strftime('%H:%M') > '13:00':
-            break
 
         for name, level, opt in up_levels:
             if p_close <= level < c_close:
@@ -136,11 +135,12 @@ class TradeState:
                              else r2(entry_price * 5.0)
         self.sl_level      = self.hard_sl
         self.max_decay     = 0.0
-        self.spot_sl_level = spot_sl_level
-        self.is_open       = True
-        self.exit_reason   = None
-        self.exit_price    = None
-        self.trail_tier    = 0   # 0=none, 1=BE(25%), 2=80%(40%), 3=95%(60%)
+        self.spot_sl_level  = spot_sl_level
+        self.is_open        = True
+        self.exit_reason    = None
+        self.exit_price     = None
+        self.trail_tier     = 0    # 0=none, 1=BE(25%), 2=80%(40%), 3=95%(60%)
+        self._current_price = None # initialise so unrealised_pnl never raises AttributeError
 
     @property
     def pnl(self):
@@ -189,9 +189,10 @@ class TradeState:
             return self._close(option_price, rsn)
 
         # Spot SL (tc_to_pdh bear PE)
-        if self.sl_type == 'spot' and spot_price is not None:
-            if spot_price >= self.spot_sl_level:
-                return self._close(option_price, 'spot_sl')
+        if (self.sl_type == 'spot' and spot_price is not None
+                and self.spot_sl_level is not None
+                and spot_price >= self.spot_sl_level):
+            return self._close(option_price, 'spot_sl')
 
         return 'hold', None
 
