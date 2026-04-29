@@ -42,8 +42,14 @@ def fetch():
                         t.sleep(1); tok = a.search_option_token(sym)
                         ltp = a.get_option_ltp(tok)
                     except: pass
+                # Theory-based lot sizing preview
+                lot_mult = config.LOT_HIGH_MULT if (
+                    dte >= config.LOT_HIGH_DTE_MIN and ltp and ltp > config.LOT_HIGH_EP_MIN
+                ) else 1
+                lots_preview = config.LOT_SIZE * lot_mult
                 ti = dict(stype=stype,etime=etime,tgt=tgt,sl=sl,sltype=sltype,
-                          strike=strike,sym=sym,ltp=ltp,dte=dte,skip=skip)
+                          strike=strike,sym=sym,ltp=ltp,dte=dte,skip=skip,
+                          lot_mult=lot_mult,lots=lots_preview)
         import pandas as pd
         path = os.path.join(os.path.dirname(__file__),'data','live_trades.csv')
         trades = []
@@ -370,12 +376,12 @@ canvas.g{display:block;flex-shrink:0}
       </div>
       <div class="mini-g">
         <div class="mini-b"><div class="mini-l">LTP</div><div class="mini-v" id="rp-ltp" style="color:#e3b341">--</div></div>
-        <div class="mini-b"><div class="mini-l">Lot</div><div class="mini-v" style="color:#58a6ff">65</div></div>
-        <div class="mini-b"><div class="mini-l">Mode</div><div class="mini-v" style="color:#3fb950">PAPER</div></div>
+        <div class="mini-b"><div class="mini-l">Lots</div><div class="mini-v" id="rp-lots" style="color:#58a6ff">65</div></div>
+        <div class="mini-b"><div class="mini-l">Mult</div><div class="mini-v" id="rp-mult" style="color:#3fb950">1x</div></div>
       </div>
       <div class="mini-g" style="margin-top:.3rem">
         <div class="mini-b"><div class="mini-l">Exchange</div><div class="mini-v" style="color:#58a6ff">NFO</div></div>
-        <div class="mini-b"><div class="mini-l">Product</div><div class="mini-v" style="color:#e3b341">MIS</div></div>
+        <div class="mini-b"><div class="mini-l">Mode</div><div class="mini-v" style="color:#3fb950">PAPER</div></div>
         <div class="mini-b"><div class="mini-l">Expiry</div><div class="mini-v" id="rp-expiry" style="color:#8b949e;font-size:.58rem">--</div></div>
       </div>
     </div>
@@ -643,6 +649,13 @@ function render(d) {
   document.getElementById('rp-opt').textContent=d.signal||'PE';
   document.getElementById('rp-ltp').textContent=rp&&rp.ltp?`Rs.${rp.ltp.toFixed(2)}`:'--';
   document.getElementById('rp-expiry').textContent=d.expiry;
+  // Lot sizing display
+  const mult = rp&&rp.lot_mult?rp.lot_mult:1;
+  const lots = rp&&rp.lots?rp.lots:65;
+  const lotsEl = document.getElementById('rp-lots');
+  const multEl = document.getElementById('rp-mult');
+  if(lotsEl) { lotsEl.textContent=lots; lotsEl.style.color=mult>1?'#e3b341':'#58a6ff'; }
+  if(multEl) { multEl.textContent=mult+'x'; multEl.style.color=mult>1?'#e3b341':'#3fb950'; }
 
   // Positions
   const pl=document.getElementById('pos-list'); pl.innerHTML='';
