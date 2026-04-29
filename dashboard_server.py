@@ -603,19 +603,40 @@ function render(d) {
   document.getElementById('spot-tag').textContent=`Spot: ${d.spot.toFixed(2)}`;
   document.getElementById('m-nifty').textContent=d.spot.toLocaleString('en-IN',{minimumFractionDigits:2});
   document.getElementById('m-ema').textContent=d.ema.toFixed(2);
-  const bc=d.bias==='bull'?'#3fb950':'#f85149';
-  document.getElementById('m-bias').style.color=bc;
-  document.getElementById('m-bias').textContent=d.bias.toUpperCase();
-  document.getElementById('m-zone').textContent=d.zone.replace(/_/g,' ').toUpperCase();
-  document.getElementById('m-expiry').textContent=d.expiry;
-  document.getElementById('m-signal').innerHTML=sigBadge(d.ti,d.signal);
+  const preMarket = d.zone === 'pre_market';
 
-  // Zone list
+  // Bias
+  const bc = preMarket ? '#6e7681' : (d.bias==='bull'?'#3fb950':'#f85149');
+  document.getElementById('m-bias').style.color = bc;
+  document.getElementById('m-bias').textContent  = preMarket ? '--' : d.bias.toUpperCase();
+
+  // Zone
+  const zoneEl = document.getElementById('m-zone');
+  if(preMarket){
+    zoneEl.textContent  = 'PRE-MARKET';
+    zoneEl.style.color  = '#6e7681';
+    zoneEl.style.fontSize = '.72rem';
+  } else {
+    zoneEl.textContent  = d.zone.replace(/_/g,' ').toUpperCase();
+    zoneEl.style.color  = '#e3b341';
+  }
+
+  document.getElementById('m-expiry').textContent = d.expiry;
+
+  // Signal badge
+  if(preMarket){
+    document.getElementById('m-signal').innerHTML =
+      '<span style="background:#161b22;color:#6e7681;border:1px solid #30363d;padding:.2rem .75rem;border-radius:20px;font-size:.75rem">Waiting 09:15...</span>';
+  } else {
+    document.getElementById('m-signal').innerHTML = sigBadge(d.ti, d.signal);
+  }
+
+  // Zone sidebar list
   const zl=document.getElementById('zone-list'); zl.innerHTML='';
   ZONES.forEach(z=>{
     const div=document.createElement('div');
-    div.className='zi'+(z===d.zone?' act':'');
-    div.textContent=(z===d.zone?'>> ':' ')+z.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+    div.className='zi'+(!preMarket && z===d.zone?' act':'');
+    div.textContent=(!preMarket && z===d.zone?'>> ':' ')+z.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
     zl.appendChild(div);
   });
 
@@ -636,7 +657,13 @@ function render(d) {
 
   // Trade details
   const tdiv=document.getElementById('trade-details');
-  if(d.ti && !d.ti.skip && d.signal){
+  if(preMarket){
+    tdiv.innerHTML=`<div class="intra-box">
+      <div class="intra-icon" style="font-size:1.5rem">&#128336;</div>
+      <div class="intra-title" style="color:#6e7681">Pre-Market</div>
+      <div class="intra-info">Signal computed after<br><b style="color:#58a6ff">09:15 AM open</b><br>Levels ready below</div>
+    </div>`;
+  } else if(d.ti && !d.ti.skip && d.signal){
     const ltp=d.ti.ltp?`Rs.${d.ti.ltp.toFixed(2)}`:'N/A';
     const sl=d.ti.sltype==='spot'?`Spot > ${(d.ti.sl+d.levels.find(l=>l.n==='PDH')?.v||0).toFixed(0)}`:`${d.ti.sl}x premium`;
     const tgt_rs=d.ti.ltp?Math.round(d.ti.ltp*d.ti.tgt/100*65):0;
@@ -664,7 +691,9 @@ function render(d) {
   }
 
   // Compass
-  document.getElementById('compass-title').textContent=`${d.zone.replace(/_/g,' ').toUpperCase()} | ${d.bias.toUpperCase()}`;
+  document.getElementById('compass-title').textContent = preMarket
+    ? 'Waiting for market open (09:15)'
+    : `${d.zone.replace(/_/g,' ').toUpperCase()} | ${d.bias.toUpperCase()}`;
   const gr=document.getElementById('gauges-row'); gr.innerHTML='';
   const gauges=[
     {label:'Trend',val:d.gauges.trend,sub:'of sessions',color:'#2979ff'},
