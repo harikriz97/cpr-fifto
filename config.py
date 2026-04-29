@@ -26,6 +26,13 @@ BODY_MIN    = 0.10
 # backtest shows DTE>=2 gives WR=63%, avg=+570 for this zone
 TC_TO_PDH_DTE_MIN = 2
 
+# ── Theory-based lot sizing ────────────────────────────────────────
+# Size up only when theta math favours it: DTE sweet spot + fat premium
+# Never use backtest WR to size — only theory factors
+LOT_HIGH_DTE_MIN = 3      # DTE >= 3 from Tuesday expiry
+LOT_HIGH_EP_MIN  = 80.0   # entry premium > Rs.80
+LOT_HIGH_MULT    = 3      # 3x lots when both conditions met (else 1x)
+
 # ── Trading mode ───────────────────────────────────────────────────
 PAPER_TRADE = True
 LOG_FILE    = "v17a_live.log"

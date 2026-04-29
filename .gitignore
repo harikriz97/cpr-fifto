@@ -1,8 +1,44 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-.env
-config_local.py
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Data outputs — exclude dated session folders, include master trades CSV
+data/2026*/
+data/2025*/
+data/2024*/
+data/2023*/
+data/2022*/
+data/2021*/
+# Keep: data/56_combined_trades.csv
+
+# Logs
+*.log
 v17a_live.log
-data/live_trades.csv
+
+# Chart archives (large binary)
+artha.tar.gz
+artha/vyuha/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 .streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/

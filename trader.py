@@ -42,6 +42,22 @@ POLL_SECS = 5
 SCAN_SECS = 30
 
 
+def get_lots(dte: int, ep: float) -> int:
+    """
+    Theory-based lot sizing.
+    DTE >= 3 AND premium > Rs.80 -> 3x lots (theta sweet spot).
+    All other cases -> 1x lot.
+    Never sized from backtest win rate.
+    """
+    if dte >= config.LOT_HIGH_DTE_MIN and ep > config.LOT_HIGH_EP_MIN:
+        mult = config.LOT_HIGH_MULT
+    else:
+        mult = 1
+    lots = config.LOT_SIZE * mult
+    log.info(f"Lot sizing: DTE={dte}  EP={ep}  -> {mult}x = {lots} units")
+    return lots
+
+
 def wait_until(hhmm_ss: str):
     target = datetime.now().replace(
         hour=int(hhmm_ss[0:2]), minute=int(hhmm_ss[3:5]),
@@ -220,9 +236,10 @@ def run_v17a(angel, oa, ctx, dry_run):
     spot_sl = r2(ctx['pdh'] + sl_param) if sl_type == 'spot' else None
     state   = TradeState(ep, tgt_pct, sl_param, sl_type, spot_sl)
 
+    lots = get_lots(dte, ep)
     log.info(f"v17a SELL {symbol}  ep={ep}  target={state.target}"
-             f"  sl={state.hard_sl}  spot_sl={spot_sl}")
-    if not dry_run: oa.place_sell_order(symbol, config.LOT_SIZE)
+             f"  sl={state.hard_sl}  spot_sl={spot_sl}  lots={lots}")
+    if not dry_run: oa.place_sell_order(symbol, lots)
 
     monitor_trade(angel, oa, symbol, token, state, sl_type, dry_run)
 
@@ -283,9 +300,10 @@ def run_intraday_v2(angel, oa, ctx, dry_run):
     ep        = angel.get_option_ltp(token)
 
     state  = TradeState(ep, tgt_pct, sl_pct, 'pct')
+    lots   = get_lots(dte, ep)
     log.info(f"Intraday SELL {symbol}  ep={ep}  target={state.target}"
-             f"  sl={state.hard_sl}  DTE={dte}")
-    if not dry_run: oa.place_sell_order(symbol, config.LOT_SIZE)
+             f"  sl={state.hard_sl}  DTE={dte}  lots={lots}")
+    if not dry_run: oa.place_sell_order(symbol, lots)
 
     monitor_trade(angel, oa, symbol, token, state, 'pct', dry_run)
 
