@@ -1,13 +1,13 @@
 """
-CPR Strategy v17a + Intraday v2 — Live Trader
+CPR Strategy v17a + Intraday v2 - Live Trader
 ===============================================
 Run at 09:10 every trading day (weekdays).
 
 Flow:
   1. Login Angel One + OpenAlgo
-  2. Fetch 50d OHLC → compute CPR, EMA(20), zone, signal
-  3. If v17a signal → enter at zone's entry time, monitor until SL/target/EOD
-  4. If no signal   → scan 5-min candles 09:35–10:30 for pivot break, enter on first break
+  2. Fetch 50d OHLC -> compute CPR, EMA(20), zone, signal
+  3. If v17a signal -> enter at zone's entry time, monitor until SL/target/EOD
+  4. If no signal   -> scan 5-min candles 09:35-10:30 for pivot break, enter on first break
 
 Usage:
   python trader.py             # paper trade
@@ -33,7 +33,7 @@ logging.basicConfig(
     format='%(asctime)s  %(levelname)-7s  %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(config.LOG_FILE),
+        logging.FileHandler(config.LOG_FILE, encoding='utf-8'),
     ]
 )
 log = logging.getLogger(__name__)
@@ -62,12 +62,12 @@ def get_nearest_expiry(angel: AngelOneClient, spot: float) -> str:
     atm   = int(round(spot / config.STRIKE_INT) * config.STRIKE_INT)
     for delta in range(0, 30):
         d = today + timedelta(days=delta)
-        if d.weekday() != 3:   # Thursday
+        if d.weekday() not in (0, 1):  # Mon or Tue (NIFTY weekly: Tue normally, Mon if Tue is holiday)
             continue
-        if d == today:         # FIX: skip DTE=0 — trade on next week's expiry
-            log.warning("Today is expiry Thursday (DTE=0) — skipping to next expiry")
+        if d == today:
+            log.warning(f"Today is expiry day (DTE=0) - skipping to next expiry")
             continue
-        exp = d.strftime('%d%b%Y').upper()
+        exp = d.strftime('%d%b%y').upper()
         try:
             angel.search_option_token(f"NIFTY{exp}{atm}CE")
             return exp
@@ -88,14 +88,14 @@ def log_trade(**kw):
         w = csv.DictWriter(f, fieldnames=fields)
         if write_hdr: w.writeheader()
         w.writerow(row)
-    log.info(f"Trade logged → pnl={row['pnl']}")
+    log.info(f"Trade logged -> pnl={row['pnl']}")
 
 
-# ── Morning setup (09:10) — OHLC only, no LTP ─────────────────────
+# ── Morning setup (09:10) - OHLC only, no LTP ─────────────────────
 def compute_morning_setup(angel: AngelOneClient) -> dict | None:
     """
     Fetch OHLC history and compute pivots + EMA.
-    Called at 09:10 BEFORE market opens — must NOT call get_nifty_ltp() here
+    Called at 09:10 BEFORE market opens - must NOT call get_nifty_ltp() here
     because pre-market LTP = yesterday's close, giving wrong zone.
     """
     history = angel.get_nifty_ohlc_history(days=50)   # FIX: 50d for EMA seed
@@ -106,11 +106,11 @@ def compute_morning_setup(angel: AngelOneClient) -> dict | None:
     today_str = date.today().strftime('%Y-%m-%d')
     last_date = str(history[-1].get('date', ''))
     if today_str in last_date:
-        # Angel One returned a partial today bar — use history[-2] as prev
+        # Angel One returned a partial today bar - use history[-2] as prev
         prev    = history[-2]
         closes  = [d['close'] for d in history[:-1]]
     else:
-        # history[-1] is yesterday — normal case
+        # history[-1] is yesterday - normal case
         prev    = history[-1]
         closes  = [d['close'] for d in history]
 
@@ -125,7 +125,7 @@ def compute_morning_setup(angel: AngelOneClient) -> dict | None:
     return dict(pvt=pvt, pdh=pdh, pdl=pdl, e20=e20, prev_body=prev_body)
 
 
-# ── Signal computation (09:15:02) — needs real open price ──────────
+# ── Signal computation (09:15:02) - needs real open price ──────────
 def compute_signal(setup: dict, spot_open: float) -> dict:
     """
     Compute zone/bias/signal using actual 09:15 open price.
@@ -136,7 +136,7 @@ def compute_signal(setup: dict, spot_open: float) -> dict:
     signal = get_v17a_signal(zone, bias)
 
     if setup['prev_body'] <= config.BODY_MIN:
-        log.info(f"Body filter fail: {setup['prev_body']}% — no signal")
+        log.info(f"Body filter fail: {setup['prev_body']}% - no signal")
         signal = None
 
     log.info(f"Zone={zone}  Bias={bias}  Signal={signal}  "
@@ -166,23 +166,23 @@ def monitor_trade(angel, oa, symbol, token, state: TradeState,
             api_errors += 1
             log.warning(f"API error #{api_errors}: {e}")
             if api_errors >= MAX_API_ERRORS:
-                log.error(f"Too many API errors — forcing EOD exit {symbol}")
+                log.error(f"Too many API errors - forcing EOD exit {symbol}")
                 break
             continue
 
         if now >= eod:
             state.eod_exit(cp)
-            log.info(f"EOD exit {symbol}  cp={cp}  pnl=₹{state.pnl:,.0f}")
+            log.info(f"EOD exit {symbol}  cp={cp}  pnl=Rs.{state.pnl:,.0f}")
             if not dry_run: oa.squareoff(symbol, config.LOT_SIZE)
             break
 
         act, reason = state.update(cp, spot)
 
         log.debug(f"{symbol}  cp={cp}  trail={state.trail_label()}"
-                  f"  sl={state.sl_level}  upnl=₹{state.unrealised_pnl:,.0f}")
+                  f"  sl={state.sl_level}  upnl=Rs.{state.unrealised_pnl:,.0f}")
 
         if act == 'exit':
-            log.info(f"Exit [{reason}] {symbol}  cp={cp}  pnl=₹{state.pnl:,.0f}")
+            log.info(f"Exit [{reason}] {symbol}  cp={cp}  pnl=Rs.{state.pnl:,.0f}")
             if not dry_run: oa.squareoff(symbol, config.LOT_SIZE)
             break
 
@@ -201,17 +201,17 @@ def run_v17a(angel, oa, ctx, dry_run):
     strike  = get_strike(atm, ctx['signal'], stype)
     expiry  = get_nearest_expiry(angel, spot)
 
-    # tc_to_pdh DTE filter: WR=50%, avg=-82 on DTE=1 → fall through to intraday v2
-    expiry_dt = datetime.strptime(expiry, '%d%b%Y').date()
+    # tc_to_pdh DTE filter: WR=50%, avg=-82 on DTE=1 -> fall through to intraday v2
+    expiry_dt = datetime.strptime(expiry, '%d%b%y').date()
     dte = (expiry_dt - date.today()).days
     if ctx['zone'] == 'tc_to_pdh' and dte < config.TC_TO_PDH_DTE_MIN:
-        log.info(f"Skip tc_to_pdh DTE={dte} (min={config.TC_TO_PDH_DTE_MIN}) — running intraday v2")
+        log.info(f"Skip tc_to_pdh DTE={dte} (min={config.TC_TO_PDH_DTE_MIN}) - running intraday v2")
         run_intraday_v2(angel, oa, ctx, dry_run)
         return
 
-    symbol  = f"NIFTY{expiry}{strike}{ctx['signal']}"
-    token   = angel.search_option_token(symbol)
-    ep      = angel.get_option_ltp(token)
+    symbol = f"NIFTY{expiry}{strike}{ctx['signal']}"
+    token  = angel.search_option_token(symbol)
+    ep     = angel.get_option_ltp(token)
 
     iv = ep / spot * 100
     if iv <= config.IV_MIN:
@@ -234,8 +234,8 @@ def run_v17a(angel, oa, ctx, dry_run):
 
 # ── Intraday v2 scan ───────────────────────────────────────────────
 def run_intraday_v2(angel, oa, ctx, dry_run):
-    log.info(f"No v17a signal → intraday v2 scan "
-             f"({config.INTRADAY_SCAN_FROM}→{config.INTRADAY_SCAN_TO})")
+    log.info(f"No v17a signal -> intraday v2 scan "
+             f"({config.INTRADAY_SCAN_FROM}->{config.INTRADAY_SCAN_TO})")
     wait_until('09:30:00')
     # Deadline: last scan candle starts at INTRADAY_SCAN_TO, closes 5 min later
     _h, _m = map(int, config.INTRADAY_SCAN_TO.split(':'))
@@ -254,7 +254,7 @@ def run_intraday_v2(angel, oa, ctx, dry_run):
         df['ts'] = pd.to_datetime(df['ts'])
         df = df.set_index('ts')[['open','high','low','close']].astype(float)
         ohlc5 = df.resample('5min', closed='left', label='left').agg(
-            open='first', high='max', low='min', close='last').dropna()
+            {'open':'first','high':'max','low':'min','close':'last'}).dropna()
 
         brk = detect_intraday_break(ohlc5, ctx['pvt'], ctx['pdh'], ctx['pdl'],
                                     config.INTRADAY_SCAN_FROM, config.INTRADAY_SCAN_TO)
@@ -276,7 +276,7 @@ def run_intraday_v2(angel, oa, ctx, dry_run):
     atm    = int(round(spot / config.STRIKE_INT) * config.STRIKE_INT)
     strike = get_strike(atm, brk['opt'], stype)
     expiry    = get_nearest_expiry(angel, spot)
-    expiry_dt = datetime.strptime(expiry, '%d%b%Y').date()
+    expiry_dt = datetime.strptime(expiry, '%d%b%y').date()
     dte       = (expiry_dt - date.today()).days
     symbol    = f"NIFTY{expiry}{strike}{brk['opt']}"
     token     = angel.search_option_token(symbol)
@@ -289,7 +289,7 @@ def run_intraday_v2(angel, oa, ctx, dry_run):
 
     monitor_trade(angel, oa, symbol, token, state, 'pct', dry_run)
 
-    log_trade(source='intraday_v2', zone=f"{brk['level_name']}_break", bias='—',
+    log_trade(source='intraday_v2', zone=f"{brk['level_name']}_break", bias='N/A',
               opt=brk['opt'], symbol=symbol,
               entry_price=ep, exit_price=state.exit_price,
               exit_reason=state.exit_reason, pnl=state.pnl, dte=dte)
@@ -304,7 +304,7 @@ def main():
 
     if args.live:
         config.PAPER_TRADE = False
-        log.warning("LIVE MODE — real orders will be placed")
+        log.warning("LIVE MODE - real orders will be placed")
 
     log.info(f"=== CPR v17a + Intraday v2 | "
              f"{'DRY-RUN' if args.dry_run else 'PAPER' if config.PAPER_TRADE else 'LIVE'}"
@@ -315,7 +315,7 @@ def main():
     oa = OpenAlgoClient()
 
     wait_until('09:10:00')
-    setup = compute_morning_setup(angel)   # OHLC + EMA only — no LTP here
+    setup = compute_morning_setup(angel)   # OHLC + EMA only - no LTP here
     if setup is None: return
 
     wait_until('09:15:02')

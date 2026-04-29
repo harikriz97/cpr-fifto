@@ -26,21 +26,33 @@ class AngelOneClient:
         self.session = None
         self.connected = False
 
-    def login(self):
-        """Login using TOTP authentication."""
-        totp = pyotp.TOTP(config.ANGELONE_TOTP_KEY).now()
-        data = self.api.generateSession(
-            config.ANGELONE_CLIENT_ID,
-            config.ANGELONE_PASSWORD,
-            totp
-        )
-        if data['status']:
-            self.session = data['data']
-            self.connected = True
-            log.info(f"Angel One login successful: {config.ANGELONE_CLIENT_ID}")
-        else:
-            raise ConnectionError(f"Angel One login failed: {data['message']}")
-        return self.session
+    def login(self, retries=3, delay=10):
+        """Login using TOTP authentication with retry on rate limit."""
+        for attempt in range(retries):
+            try:
+                totp = pyotp.TOTP(config.ANGELONE_TOTP_KEY).now()
+                data = self.api.generateSession(
+                    config.ANGELONE_CLIENT_ID,
+                    config.ANGELONE_PASSWORD,
+                    totp
+                )
+                if data['status']:
+                    self.session = data['data']
+                    self.connected = True
+                    log.info(f"Angel One login successful: {config.ANGELONE_CLIENT_ID}")
+                    return self.session
+                else:
+                    raise ConnectionError(f"Angel One login failed: {data['message']}")
+            except Exception as e:
+                if 'access rate' in str(e).lower() or 'rate' in str(e).lower():
+                    if attempt < retries - 1:
+                        log.warning(f"Rate limit hit, retrying in {delay}s... (attempt {attempt+1}/{retries})")
+                        time.sleep(delay)
+                        delay *= 2  # exponential backoff
+                    else:
+                        raise
+                else:
+                    raise
 
     def get_nifty_ohlc_history(self, days=30):
         """
@@ -89,13 +101,22 @@ class AngelOneClient:
     def search_option_token(self, symbol_name):
         """
         Search for option symbol token.
-        symbol_name: e.g. 'NIFTY24JAN2124400CE'
-        Returns token string.
+        symbol_name: e.g. 'NIFTY28APR2624000PE'
+        Returns token string. Retries once on rate-limit.
         """
-        resp = self.api.searchScrip(NFO_EXCHANGE, symbol_name)
-        if not resp['status'] or not resp['data']:
-            raise RuntimeError(f"Symbol not found: {symbol_name}")
-        return resp['data'][0]['symboltoken']
+        for attempt in range(3):
+            try:
+                resp = self.api.searchScrip(NFO_EXCHANGE, symbol_name)
+                if not resp['status'] or not resp['data']:
+                    raise RuntimeError(f"Symbol not found: {symbol_name}")
+                return resp['data'][0]['symboltoken']
+            except RuntimeError:
+                raise
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f"searchScrip failed for {symbol_name}: {e}")
 
     def get_option_chain_ltp(self, expiry_date, atm_strike, opt_type, strike_type,
                               strike_interval=50):
@@ -138,4 +159,4 @@ class AngelOneClient:
         """
         from datetime import datetime
         dt = datetime.strptime('20' + expiry_yymmdd, '%Y%m%d')
-        return dt.strftime('%d%b%Y').upper()
+        return dt.strftime('%d%b%y').upper()

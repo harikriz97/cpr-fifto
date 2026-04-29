@@ -76,7 +76,7 @@ class OpenAlgoClient:
 
     def get_positions(self):
         """Return current open positions from OpenAlgo."""
-        resp = self._post("positions", {})
+        resp = self._post("positionbook", {})
         return resp.get('data', [])
 
     def get_order_status(self, order_id):

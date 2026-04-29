@@ -5,18 +5,18 @@ Fill in your API credentials before running.
 """
 
 # ── Angel One Smart API ────────────────────────────────────────────
-ANGELONE_API_KEY    = "YOUR_ANGELONE_API_KEY"
-ANGELONE_CLIENT_ID  = "YOUR_CLIENT_ID"
-ANGELONE_PASSWORD   = "YOUR_PASSWORD"
-ANGELONE_TOTP_KEY   = "YOUR_TOTP_SECRET_KEY"
+ANGELONE_API_KEY    = "k6S2VzNN"
+ANGELONE_CLIENT_ID  = "pvip1030"
+ANGELONE_PASSWORD   = "5131"
+ANGELONE_TOTP_KEY   = "UJ2OEF4RVJQG3Q7JLRGKH4NZ3A"
 
 # ── OpenAlgo ───────────────────────────────────────────────────────
 OPENALGO_HOST       = "http://127.0.0.1:5000"
-OPENALGO_API_KEY    = "YOUR_OPENALGO_API_KEY"
+OPENALGO_API_KEY    = "4292034230005c316ef7b477ea6e61685f04875817966f0b547706cfe520880d"
 OPENALGO_STRATEGY   = "V17A_CPR_PAPER"
 
 # ── Strategy constants ─────────────────────────────────────────────
-LOT_SIZE    = 75
+LOT_SIZE    = 65
 STRIKE_INT  = 50
 EMA_PERIOD  = 20
 EOD_EXIT    = "15:20:00"
