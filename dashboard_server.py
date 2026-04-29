@@ -227,7 +227,7 @@ html,body{height:100%;overflow:hidden;background:#0d1117;color:#c9d1d9;font-fami
 #center-body{flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0}
 #center-chart{height:48%;flex-shrink:0;border-bottom:1px solid #21262d;display:flex;flex-direction:column;background:#161b22}
 #center-mid{flex:1;min-height:0;display:grid;grid-template-columns:1.3fr 1fr;overflow:hidden}
-#center-bottom{height:130px;flex-shrink:0;border-top:1px solid #21262d;background:#161b22;display:flex;flex-direction:column}
+#center-bottom{height:155px;flex-shrink:0;border-top:1px solid #21262d;background:#161b22;display:flex;flex-direction:column}
 #chart-container{flex:1;min-height:0;position:relative}
 #price-chart{width:100%;height:100%}
 
@@ -396,7 +396,7 @@ canvas.g{display:block;flex-shrink:0}
           <span style="font-size:.55rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#6e7681">&#9679; Strategy Compass</span>
           <span style="font-size:.67rem;color:#c9d1d9" id="compass-title">--</span>
         </div>
-        <div id="gauges-row" style="display:flex;align-items:center;justify-content:center;gap:1.5rem;flex:1;padding:0 1rem"></div>
+        <div id="gauges-row" style="display:flex;align-items:stretch;flex:1;min-height:0"></div>
       </div>
 
     </div>
@@ -522,44 +522,50 @@ function updateChart(d) {
   _chart.timeScale().fitContent();
 }
 
-function drawGauge(canvas, pct, color) {
-  const ctx=canvas.getContext('2d'), w=canvas.width, h=canvas.height;
-  const cx=w/2, cy=h-6, r=h*0.82;
-  ctx.clearRect(0,0,w,h);
-  // track
-  ctx.beginPath(); ctx.arc(cx,cy,r,Math.PI,2*Math.PI);
-  ctx.strokeStyle='#21262d'; ctx.lineWidth=9; ctx.lineCap='round'; ctx.stroke();
-  // fill
-  if(pct>0){
-    const grad=ctx.createLinearGradient(cx-r,cy,cx+r,cy);
-    grad.addColorStop(0,color+'88'); grad.addColorStop(1,color);
-    ctx.beginPath(); ctx.arc(cx,cy,r,Math.PI,Math.PI+pct/100*Math.PI);
-    ctx.strokeStyle=grad; ctx.lineWidth=9; ctx.lineCap='round'; ctx.stroke();
-  }
-  // glow
-  ctx.shadowColor=color; ctx.shadowBlur=8;
-  ctx.beginPath(); ctx.arc(cx,cy,r,Math.PI+pct/100*Math.PI-0.05,Math.PI+pct/100*Math.PI);
-  ctx.strokeStyle=color; ctx.lineWidth=9; ctx.lineCap='round'; ctx.stroke();
-  ctx.shadowBlur=0;
-  // needle
-  const ang=Math.PI+pct/100*Math.PI;
-  ctx.beginPath(); ctx.moveTo(cx,cy);
-  ctx.lineTo(cx+Math.cos(ang)*r*0.78, cy+Math.sin(ang)*r*0.78);
-  ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.lineCap='round'; ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx,cy,4,0,2*Math.PI); ctx.fillStyle='#fff'; ctx.fill();
-  ctx.beginPath(); ctx.arc(cx,cy,2.5,0,2*Math.PI); ctx.fillStyle=color; ctx.fill();
-}
+function makeGaugeSVG(label, val, sub, color) {
+  // SVG semicircle gauge — no canvas cut-off issues
+  const pct = Math.min(Math.max(val, 0), 100) / 100;
+  const cx=60, cy=58, r=44, sw=8;
+  // Arc end point calculation
+  const ang = Math.PI * pct;
+  const ex = cx - r * Math.cos(ang);
+  const ey = cy - r * Math.sin(ang);
+  const largeArc = pct > 0.5 ? 1 : 0;
+  const arcPath = pct === 0 ? '' :
+    `M${cx-r},${cy} A${r},${r} 0 ${largeArc},1 ${ex.toFixed(2)},${ey.toFixed(2)}`;
+  // Needle
+  const nang = Math.PI - Math.PI*pct;
+  const nx = (cx + r*0.72*Math.cos(nang)).toFixed(1);
+  const ny = (cy - r*0.72*Math.sin(nang)).toFixed(1);
 
-function makeGauge(label,val,sub,color){
-  const div=document.createElement('div');
-  div.style.cssText='display:flex;align-items:center;gap:.6rem;padding:.4rem .9rem;background:#0d1117;border:1px solid #21262d;border-radius:8px;';
-  div.innerHTML=`<canvas class="g" id="gc-${label}" width="86" height="54"></canvas>
-    <div style="display:flex;flex-direction:column;justify-content:center">
-      <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;color:#6e7681;font-weight:600">${label}</div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:700;color:${color};line-height:1.15">${val}%</div>
-      <div style="font-size:.57rem;color:#6e7681;margin-top:.08rem">${sub}</div>
-    </div>`;
-  return {div, draw:()=>drawGauge(div.querySelector('canvas'),val,color)};
+  const div = document.createElement('div');
+  div.style.cssText = `display:flex;flex-direction:column;align-items:center;justify-content:center;
+    flex:1;padding:.35rem .3rem;border-right:1px solid #21262d;gap:.1rem`;
+  div.innerHTML = `
+    <svg viewBox="0 0 120 65" width="110" height="62" style="display:block;overflow:visible">
+      <defs>
+        <filter id="glow-${label}" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <!-- Track -->
+      <path d="M${cx-r},${cy} A${r},${r} 0 0,1 ${cx+r},${cy}"
+        fill="none" stroke="#21262d" stroke-width="${sw}" stroke-linecap="round"/>
+      <!-- Fill -->
+      ${arcPath ? `<path d="${arcPath}" fill="none" stroke="${color}" stroke-width="${sw}"
+        stroke-linecap="round" filter="url(#glow-${label})" opacity="0.9"/>` : ''}
+      <!-- Needle -->
+      <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}"
+        stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity="0.9"/>
+      <!-- Center dot -->
+      <circle cx="${cx}" cy="${cy}" r="4.5" fill="#161b22" stroke="${color}" stroke-width="2"/>
+      <circle cx="${cx}" cy="${cy}" r="2" fill="#ffffff"/>
+    </svg>
+    <div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.08em;color:#6e7681;font-weight:700;line-height:1">${label}</div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:1.15rem;font-weight:700;color:${color};line-height:1.1">${val}%</div>
+    <div style="font-size:.53rem;color:#6e7681;line-height:1">${sub}</div>`;
+  return div;
 }
 
 function sigBadge(ti, signal) {
@@ -695,17 +701,12 @@ function render(d) {
     ? 'Waiting for market open (09:15)'
     : `${d.zone.replace(/_/g,' ').toUpperCase()} | ${d.bias.toUpperCase()}`;
   const gr=document.getElementById('gauges-row'); gr.innerHTML='';
-  const gauges=[
-    {label:'Trend',val:d.gauges.trend,sub:'of sessions',color:'#2979ff'},
-    {label:'Sideways',val:d.gauges.side,sub:'stable range',color:'#42a5f5'},
-    {label:'Reversal',val:d.gauges.rev,sub:'snap-back risk',color:'#e53935'},
-    {label:'Win Rate',val:d.gauges.wr,sub:'backtest est.',color:'#43a047'},
-  ];
-  gauges.forEach(g=>{
-    const {div,draw}=makeGauge(g.label,g.val,g.sub,g.color);
-    gr.appendChild(div);
-    requestAnimationFrame(draw);
-  });
+  [
+    {label:'Trend',  val:d.gauges.trend, sub:'of sessions',   color:'#2979ff'},
+    {label:'Sideways',val:d.gauges.side, sub:'stable range',  color:'#42a5f5'},
+    {label:'Reversal',val:d.gauges.rev,  sub:'snap-back risk',color:'#e53935'},
+    {label:'Win Rate',val:d.gauges.wr,   sub:'backtest est.', color:'#43a047'},
+  ].forEach(g => gr.appendChild(makeGaugeSVG(g.label, g.val, g.sub, g.color)));
 
   // Right panel
   const rp=d.ti;
