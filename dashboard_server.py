@@ -81,14 +81,21 @@ def fetch():
         # Fetch intraday 1-min OHLC for chart
         candles = []
         try:
-            now_dt = datetime.now()
+            from datetime import timezone, timedelta
+            IST = timezone(timedelta(hours=5, minutes=30))
+            now_dt  = datetime.now()
             from_dt = now_dt.replace(hour=9, minute=15, second=0, microsecond=0)
             if now_dt.hour >= 9:
                 bars = a.get_nifty_1min_ohlc(from_dt, now_dt)
                 for bar in bars:
-                    ts_str = str(bar[0])[:16]  # '2026-04-27 09:15'
+                    # Parse timestamp as IST → Unix UTC seconds
+                    ts = str(bar[0]).replace('T', ' ')
+                    if '+' in ts: ts = ts[:ts.index('+')]
+                    ts = ts[:16]  # 'YYYY-MM-DD HH:MM'
+                    dt_ist = datetime.strptime(ts, '%Y-%m-%d %H:%M').replace(tzinfo=IST)
+                    unix = int(dt_ist.timestamp())
                     candles.append({
-                        "time": ts_str,
+                        "time":  unix,
                         "open":  float(bar[1]),
                         "high":  float(bar[2]),
                         "low":   float(bar[3]),
@@ -396,7 +403,14 @@ canvas.g{display:block;flex-shrink:0}
 const ZONES=['above_r4','r3_to_r4','r2_to_r3','r1_to_r2','pdh_to_r1','tc_to_pdh','within_cpr','pdl_to_bc','pdl_to_s1','s1_to_s2','s2_to_s3','s3_to_s4','below_s4'];
 
 // Chart setup
-let _chart = null, _candleSeries = null, _priceLine = null;
+let _chart = null, _candleSeries = null, _priceLines = [];
+
+const IST_OFFSET = 5.5 * 3600; // IST = UTC+5:30 in seconds
+
+function istFmt(unixUtc) {
+  const d = new Date((unixUtc + IST_OFFSET) * 1000);
+  return d.getUTCHours().toString().padStart(2,'0') + ':' + d.getUTCMinutes().toString().padStart(2,'0');
+}
 
 function initChart() {
   const el = document.getElementById('price-chart');
@@ -406,11 +420,13 @@ function initChart() {
     grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     rightPriceScale: { borderColor: '#21262d', textColor: '#8b949e' },
-    timeScale: { borderColor: '#21262d', timeVisible: true, secondsVisible: false,
-                 tickMarkFormatter: (t) => {
-                   const d = new Date(t*1000);
-                   return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
-                 }},
+    timeScale: {
+      borderColor: '#21262d', timeVisible: true, secondsVisible: false,
+      tickMarkFormatter: (t) => istFmt(t),
+    },
+    localization: {
+      timeFormatter: (t) => istFmt(t),
+    },
     handleScroll: true, handleScale: true,
   });
   _candleSeries = _chart.addCandlestickSeries({
@@ -418,46 +434,46 @@ function initChart() {
     borderUpColor: '#3fb950', borderDownColor: '#f85149',
     wickUpColor: '#3fb950', wickDownColor: '#f85149',
   });
-  // Resize observer
   new ResizeObserver(() => {
     const c = document.getElementById('chart-container');
     if (c && _chart) _chart.resize(c.clientWidth, c.clientHeight);
   }).observe(document.getElementById('chart-container'));
 }
 
+function clearPriceLines() {
+  _priceLines.forEach(pl => { try { _candleSeries.removePriceLine(pl); } catch(e){} });
+  _priceLines = [];
+}
+
 function updateChart(d) {
   if (!_chart) initChart();
   if (!_chart) return;
 
-  // Convert candles
+  // Candles — time is already Unix UTC from Python
   if (d.candles && d.candles.length > 0) {
-    const data = d.candles.map(c => ({
-      time: Math.floor(new Date(c.time.replace(' ','T')+':00').getTime()/1000),
-      open: c.open, high: c.high, low: c.low, close: c.close
-    })).filter(c => !isNaN(c.time)).sort((a,b)=>a.time-b.time);
+    const data = d.candles
+      .filter(c => typeof c.time === 'number' && !isNaN(c.time))
+      .sort((a,b) => a.time - b.time);
     if (data.length) _candleSeries.setData(data);
   }
 
-  // Clear old price lines
-  if (_priceLine) { try { _candleSeries.removePriceLine(_priceLine); } catch(e){} }
+  // Remove ALL old price lines before redrawing
+  clearPriceLines();
 
-  // Draw spot line
-  _priceLine = _candleSeries.createPriceLine({
+  // Spot line
+  _priceLines.push(_candleSeries.createPriceLine({
     price: d.spot, color: '#ffffff', lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dashed,
     axisLabelVisible: true, title: 'SPOT'
-  });
+  }));
 
-  // Draw pivot levels
-  const lvlColors = { R4:'#f85149',R3:'#f85149',R2:'#f85149',R1:'#f85149',
-    PDH:'#e3b341', TC:'#58a6ff',PP:'#58a6ff',BC:'#58a6ff',
-    PDL:'#e3b341', S1:'#3fb950',S2:'#3fb950',S3:'#3fb950',S4:'#3fb950' };
+  // Pivot levels — one line each, no duplicates
   d.levels.forEach(lv => {
-    _candleSeries.createPriceLine({
+    _priceLines.push(_candleSeries.createPriceLine({
       price: lv.v, color: lv.c, lineWidth: 1,
       lineStyle: LightweightCharts.LineStyle.Dotted,
       axisLabelVisible: true, title: lv.n
-    });
+    }));
   });
 
   document.getElementById('chart-spot').textContent = d.spot.toLocaleString('en-IN',{minimumFractionDigits:2});
