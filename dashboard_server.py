@@ -9,16 +9,27 @@ import os, sys
 
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 app = Flask(__name__)
-_cache = {"data": None, "ts": 0}
+_cache  = {"data": None, "ts": 0}
+_angel  = {"client": None, "ts": 0}   # reuse session, re-login only if stale
+
+def _get_angel():
+    """Return cached AngelOne client; re-login if older than 6 hours."""
+    from angelone import AngelOneClient
+    now = time.time()
+    if _angel["client"] is None or (now - _angel["ts"]) > 21600:
+        a = AngelOneClient()
+        a.login()
+        _angel["client"] = a
+        _angel["ts"] = now
+    return _angel["client"]
 
 def fetch():
     try:
         import time as t
-        from angelone import AngelOneClient
         from trader import compute_morning_setup, compute_signal, get_nearest_expiry
         from strategy import get_strike
         import config
-        a = AngelOneClient(); a.login()
+        a = _get_angel()
         spot   = a.get_nifty_ltp()
         setup  = compute_morning_setup(a)
         ctx    = compute_signal(setup, spot)
@@ -119,12 +130,16 @@ def fetch():
         return {"error": str(e)}
 
 def bg_fetch():
+    # Only refresh during market hours; longer interval to avoid rate limits
     while True:
         try:
-            _cache['data'] = fetch()
-            _cache['ts']   = time.time()
+            h = datetime.now().hour
+            # Refresh only 8:45 AM to 3:30 PM IST, every 120 seconds
+            if 8 <= h < 16:
+                _cache['data'] = fetch()
+                _cache['ts']   = time.time()
         except: pass
-        time.sleep(30)
+        time.sleep(120)
 
 @app.route('/api/data')
 def api_data():

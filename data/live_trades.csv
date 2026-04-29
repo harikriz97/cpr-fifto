@@ -1,0 +1,2 @@
+date,source,zone,bias,opt,symbol,entry_price,exit_price,exit_reason,pnl,dte
+2026-04-28,v17a,within_cpr,bull,PE,NIFTY05MAY2624100PE,244.85,246.5,lockin_sl,-107.25,7
