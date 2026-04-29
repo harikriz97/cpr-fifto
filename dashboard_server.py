@@ -8,6 +8,11 @@ from datetime import datetime, date
 import os, sys
 
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+def _strip_file_handlers():
+    """Remove FileHandlers from root logger so dashboard doesn't write to trader log."""
+    root = logging.getLogger()
+    root.handlers = [h for h in root.handlers if not isinstance(h, logging.FileHandler)]
 app = Flask(__name__)
 _cache  = {"data": None, "ts": 0}
 _angel  = {"client": None, "ts": 0}   # reuse session, re-login only if stale
@@ -29,10 +34,26 @@ def fetch():
         from trader import compute_morning_setup, compute_signal, get_nearest_expiry
         from strategy import get_strike
         import config
-        a = _get_angel()
-        spot   = a.get_nifty_ltp()
-        setup  = compute_morning_setup(a)
-        ctx    = compute_signal(setup, spot)
+        _strip_file_handlers()  # prevent writing to trader's log file
+        a    = _get_angel()
+        spot = a.get_nifty_ltp()
+        now  = datetime.now()
+        setup = compute_morning_setup(a)
+
+        # Rule: compute signal only AFTER market opens (9:15 AM)
+        # Before 9:15, use pre-market LTP just for levels display — no signal
+        market_open = now.hour > 9 or (now.hour == 9 and now.minute >= 15)
+        if market_open:
+            ctx = compute_signal(setup, spot)
+        else:
+            # Pre-market: show levels but no signal yet
+            from strategy import compute_pivots, classify_zone, r2
+            pvt_pre = compute_pivots(setup['pdh'], setup['pdl'],
+                                     spot)  # placeholder pivot, not used for signal
+            ctx = dict(zone='pre_market', bias='--', signal=None,
+                       pvt=setup['pvt'], pdh=setup['pdh'], pdl=setup['pdl'],
+                       spot_open=r2(spot), e20=setup['e20'])
+
         t.sleep(1)
         expiry = get_nearest_expiry(a, spot)
         atm    = int(round(spot/50)*50)
