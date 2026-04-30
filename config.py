@@ -33,8 +33,8 @@ INDICES = {
     },
 }
 
-# SENSEX also traded on Wednesday (2) and Thursday (3)
-DUAL_INDEX_DAYS = {2, 3}
+# SENSEX dual mode — set to {2, 3} when SENSEX token configured in angelone.py
+DUAL_INDEX_DAYS = set()   # disabled until SENSEX history source configured
 
 # ── Strategy params ───────────────────────────────────────────────────────────
 EMA_PERIOD     = 20

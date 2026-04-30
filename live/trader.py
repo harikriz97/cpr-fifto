@@ -97,51 +97,51 @@ def append_trade(row: dict):
     log.info("Trade saved: %s", row)
 
 
-# ── Historical data loader (adapt to your data source) ───────────────────────
+# ── Historical data loader via AngelOne ──────────────────────────────────────
 def load_daily_ohlc(index: str, n_bars: int = EMA_SEED + 10) -> pd.DataFrame:
     """
-    Load recent daily OHLC for index.
-    Adapt this to your historical data source (AngelOne historical API,
-    local CSV, etc.).
-
-    Must return DataFrame with columns:
-      date (str YYYYMMDD), open, high, low, close, vix (0 if unavailable),
-      tc, bc, pvt, ema
+    Load recent daily OHLC via AngelOne Smart API.
+    Returns DataFrame with columns:
+      date, open, high, low, close, vix, tc, bc, pvt, cpr_mid, ema
     Sorted ascending by date.
     """
     try:
-        from openalgo import api as openalgo_api
-        client = openalgo_api(
-            api_key=os.getenv("OPENALGO_API_KEY", ""),
-            host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-        )
-        end_dt   = date.today().strftime("%Y-%m-%d")
-        start_dt = (date.today() - timedelta(days=n_bars * 2)).strftime("%Y-%m-%d")
-        sym  = INDICES[index]["spot_sym"]
-        exch = "NSE" if index == "NIFTY" else "BSE"
-        df = client.history(symbol=sym, exchange=exch, interval="1d",
-                            start_date=start_dt, end_date=end_dt)
-        df = df.tail(n_bars).copy()
+        import sys, os as _os
+        sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+        from angelone import AngelOneClient
+        a = AngelOneClient()
+        a.login()
+        history = a.get_nifty_ohlc_history(days=n_bars + 20)
+        if len(history) < 10:
+            raise RuntimeError("Insufficient bars from AngelOne")
+
+        # Remove today's partial bar if present
+        today_str = date.today().strftime('%Y-%m-%d')
+        if str(history[-1].get('date','')).startswith(today_str):
+            history = history[:-1]
+        history = history[-n_bars:]
+
+        rows = []
+        for h in history:
+            cpr = compute_cpr(h['high'], h['low'], h['close'])
+            rows.append(dict(
+                date  = str(h['date'])[:10].replace('-',''),
+                open  = float(h['open']),
+                high  = float(h['high']),
+                low   = float(h['low']),
+                close = float(h['close']),
+                vix   = 0.0,
+                **cpr
+            ))
+        df = pd.DataFrame(rows)
+        df["ema"]     = compute_ema_series(df["close"], EMA_PERIOD).shift(1)
+        df["cpr_mid"] = (df["tc"] + df["bc"]) / 2
+        return df.dropna(subset=["ema"]).reset_index(drop=True)
+
     except Exception as e:
-        log.warning("OpenAlgo history failed (%s) — using empty DataFrame", e)
-        return pd.DataFrame(columns=["date","open","high","low","close","vix","tc","bc","pvt","ema"])
-
-    df = df.reset_index()
-    df.columns = [c.lower() for c in df.columns]
-    df["date"] = df["date"].astype(str).str.replace("-","")
-    df["vix"]  = 0.0   # load VIX separately if needed
-
-    # Compute CPR
-    rows = []
-    for _, r in df.iterrows():
-        cpr = compute_cpr(r["high"], r["low"], r["close"])
-        rows.append({**r.to_dict(), **cpr, "pvt": cpr["pvt"]})
-    df = pd.DataFrame(rows)
-
-    # EMA (shifted — use prev day EMA as today's signal input)
-    df["ema"] = compute_ema_series(df["close"], EMA_PERIOD).shift(1)
-    df["cpr_mid"] = (df["tc"] + df["bc"]) / 2
-    return df.dropna(subset=["ema"]).reset_index(drop=True)
+        log.error("load_daily_ohlc failed: %s", e)
+        return pd.DataFrame(columns=["date","open","high","low","close","vix",
+                                      "tc","bc","pvt","cpr_mid","ema"])
 
 
 def get_expiry(index: str) -> str:
