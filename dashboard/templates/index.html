@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Hari CPR Dashboard</title>
+<meta http-equiv="refresh" content="30">
+<style>
+body{background:#0d1117;color:#c9d1d9;font-family:'JetBrains Mono',monospace;margin:0;padding:1rem}
+.card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:1rem;margin:.5rem 0}
+.green{color:#3fb950}.red{color:#f85149}.blue{color:#58a6ff}.yellow{color:#e3b341}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+td,th{padding:.4rem .6rem;border-bottom:1px solid #21262d;text-align:left}
+th{color:#6e7681;font-size:.7rem;text-transform:uppercase}
+#ts{color:#6e7681;font-size:.75rem;float:right}
+</style>
+</head>
+<body>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+  <h2 style="margin:0;color:#58a6ff">FIFTO CPR Strategy</h2>
+  <span id="ts">Loading...</span>
+</div>
+<div id="content"><p style="color:#6e7681">Loading...</p></div>
+<script>
+async function load(){
+  const r = await fetch('/api/data');
+  const d = await r.json();
+  if(d.error){document.getElementById('content').innerHTML='<p style="color:#f85149">'+d.error+'</p>';return;}
+  document.getElementById('ts').textContent = 'Updated: '+d.last_updated;
+  let html = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-bottom:1rem">';
+  const kpis = [
+    ['Total P&L','Rs.'+d.total_pnl.toLocaleString('en-IN'),d.total_pnl>=0?'green':'red'],
+    ['Win Rate',d.win_rate+'%','blue'],
+    ['Trades',d.total_trades,'blue'],
+    ['Max DD','Rs.'+Math.abs(d.max_dd).toLocaleString('en-IN'),'red'],
+  ];
+  kpis.forEach(([l,v,c])=>{
+    html+=`<div class="card"><div style="font-size:.65rem;color:#6e7681;margin-bottom:.3rem">${l}</div><div class="${c}" style="font-size:1.3rem;font-weight:700">${v}</div></div>`;
+  });
+  html += '</div>';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">';
+  html += '<div class="card"><div style="color:#6e7681;font-size:.7rem;margin-bottom:.5rem">TODAY</div>';
+  if(d.today_trades.length){
+    d.today_trades.forEach(t=>{
+      const pc=t.pnl>=0?'green':'red';
+      html+=`<div style="display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid #21262d;font-size:.78rem">
+        <span>${t.strategy} ${t.opt} ${t.strike}</span>
+        <span class="${pc}">Rs.${t.pnl}</span></div>`;
+    });
+  } else { html += '<p style="color:#6e7681;font-size:.78rem">No trades today</p>'; }
+  html += '</div>';
+  html += '<div class="card"><div style="color:#6e7681;font-size:.7rem;margin-bottom:.5rem">RECENT TRADES</div><table><thead><tr><th>Date</th><th>Strategy</th><th>Opt</th><th>P&L</th></tr></thead><tbody>';
+  d.recent_trades.slice(-8).reverse().forEach(t=>{
+    const pc=t.pnl>=0?'green':'red';
+    html+=`<tr><td>${t.date}</td><td>${t.strategy}</td><td>${t.opt}</td><td class="${pc}">Rs.${t.pnl}</td></tr>`;
+  });
+  html += '</tbody></table></div></div>';
+  document.getElementById('content').innerHTML = html;
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
