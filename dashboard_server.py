@@ -141,11 +141,40 @@ def fetch():
                     })
         except: pass
 
+        # Read live trade state from trader.py
+        live_state = None
+        try:
+            import json as _json
+            sp = os.path.join(os.path.dirname(__file__), 'data', 'live_state.json')
+            if os.path.exists(sp):
+                with open(sp) as f: live_state = _json.load(f)
+            # Enrich with OpenAlgo live position data (ground truth for lots/pnl)
+            if live_state and live_state.get('status') == 'open':
+                try:
+                    oa_resp = rq.post(f"{config.OPENALGO_HOST}/api/v1/positionbook",
+                        json={'apikey': config.OPENALGO_API_KEY}, timeout=3)
+                    oa_pos = oa_resp.json().get('data', [])
+                    sym = live_state.get('symbol', '')
+                    for p in oa_pos:
+                        if p.get('symbol') == sym and int(p.get('quantity', 0)) < 0:
+                            actual_lots = abs(int(p['quantity']))
+                            ltp = float(p.get('ltp', live_state.get('current', 0)))
+                            ep  = float(p.get('average_price', live_state.get('entry', 0)))
+                            live_state['lots']    = actual_lots
+                            live_state['current'] = ltp
+                            live_state['upnl']    = round((ep - ltp) * actual_lots, 0)
+                            live_state['entry']   = ep
+                            live_state['oa_pnl']  = round(float(p.get('pnl', 0)), 0)
+                            break
+                except: pass
+        except: pass
+
         return dict(spot=spot, ema=setup['e20'], pdh=setup['pdh'], pdl=setup['pdl'],
                     zone=z, bias=ctx['bias'], signal=ctx.get('signal','') or '',
                     expiry=expiry, atm=atm, levels=lv, candles=candles,
                     ti=ti, trades=trades, pnl_today=pnl_today, oa_ok=oa_ok,
                     gauges=dict(trend=trend_v,side=side_v,rev=rev_v,wr=wr_v),
+                    live_state=live_state,
                     ts=datetime.now().strftime('%H:%M:%S'))
     except Exception as e:
         return {"error": str(e)}
@@ -419,6 +448,12 @@ canvas.g{display:block;flex-shrink:0}
         <div class="mini-b"><div class="mini-l">Exchange</div><div class="mini-v" style="color:#58a6ff">NFO</div></div>
         <div class="mini-b"><div class="mini-l">Mode</div><div class="mini-v" style="color:#3fb950">PAPER</div></div>
         <div class="mini-b"><div class="mini-l">Expiry</div><div class="mini-v" id="rp-expiry" style="color:#8b949e;font-size:.58rem">--</div></div>
+      </div>
+    </div>
+    <div class="rp-sec">
+      <div class="rp-lbl">Live Trail Status</div>
+      <div id="trail-panel">
+        <div style="color:#6e7681;font-size:.72rem;text-align:center;padding:.4rem 0">No active trade</div>
       </div>
     </div>
     <div class="rp-sec" style="flex:1">
@@ -722,6 +757,81 @@ function render(d) {
   const multEl = document.getElementById('rp-mult');
   if(lotsEl) { lotsEl.textContent=lots; lotsEl.style.color=mult>1?'#e3b341':'#58a6ff'; }
   if(multEl) { multEl.textContent=mult+'x'; multEl.style.color=mult>1?'#e3b341':'#3fb950'; }
+
+  // Live trail status
+  const tp = document.getElementById('trail-panel');
+  const ls = d.live_state;
+  if(ls && ls.status === 'open'){
+    const tierColors = ['#6e7681','#58a6ff','#e3b341','#3fb950'];
+    const tierColor  = tierColors[ls.trail_tier] || '#6e7681';
+    const upnlColor  = ls.upnl >= 0 ? '#3fb950' : '#f85149';
+    const upnlSign   = ls.upnl >= 0 ? '+' : '';
+    const decayColor = ls.decay_pct >= 0 ? '#3fb950' : '#f85149';
+    const decaySign  = ls.decay_pct >= 0 ? '+' : '';
+    const tiers = [
+      {t:1, label:'Break-even (25%)', col:'#58a6ff'},
+      {t:2, label:'80% Lock (40%)',   col:'#e3b341'},
+      {t:3, label:'95% Lock (60%)',   col:'#3fb950'},
+    ];
+    const tierBars = tiers.map(x => {
+      const active = ls.trail_tier >= x.t;
+      const bg = active ? x.col+'22' : '#0d1117';
+      const bc = active ? x.col+'88' : '#21262d';
+      const tc = active ? x.col : '#6e7681';
+      return `<div style="background:${bg};border:1px solid ${bc};border-radius:5px;padding:.28rem .5rem;font-size:.62rem;color:${tc};display:flex;align-items:center;gap:.35rem;margin-bottom:.25rem">
+        <span style="width:6px;height:6px;border-radius:50%;background:${active?x.col:'#30363d'};display:inline-block;flex-shrink:0"></span>
+        ${x.label}${active?' ✓':''}
+      </div>`;
+    }).join('');
+
+    const lotsDisp  = ls.lots ? ls.lots : '?';
+    const oaPnl     = ls.oa_pnl !== undefined ? ls.oa_pnl : ls.upnl;
+    const oaPnlCol  = oaPnl >= 0 ? '#3fb950' : '#f85149';
+    const oaPnlSign = oaPnl >= 0 ? '+' : '';
+
+    tp.innerHTML = `
+      <div style="background:#0d1117;border:1px solid #21262d;border-radius:7px;padding:.5rem .6rem;margin-bottom:.3rem">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.35rem">
+          <span style="font-size:.6rem;color:#6e7681">${ls.symbol.slice(-16)}</span>
+          <span style="font-size:.6rem;font-family:'JetBrains Mono',monospace;color:${oaPnlCol};font-weight:700">${oaPnlSign}Rs.${oaPnl.toFixed(0)}</span>
+        </div>
+        <div style="background:#161b22;border:1px solid #21262d;border-radius:5px;padding:.22rem .4rem;text-align:center;margin-bottom:.3rem">
+          <span style="font-size:.55rem;color:#6e7681">Lots </span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:700;color:${lotsDisp==195?'#e3b341':'#58a6ff'}">${lotsDisp}</span>
+          <span style="font-size:.55rem;color:#6e7681"> (${lotsDisp==195?'3x':'1x'})</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;margin-bottom:.35rem">
+          <div style="background:#161b22;border-radius:5px;padding:.25rem .4rem;text-align:center">
+            <div style="font-size:.52rem;color:#6e7681;margin-bottom:.1rem">Entry</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:#f0f6fc">${ls.entry.toFixed(2)}</div>
+          </div>
+          <div style="background:#161b22;border-radius:5px;padding:.25rem .4rem;text-align:center">
+            <div style="font-size:.52rem;color:#6e7681;margin-bottom:.1rem">Current</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:#f0f6fc">${ls.current.toFixed(2)}</div>
+          </div>
+          <div style="background:#161b22;border-radius:5px;padding:.25rem .4rem;text-align:center">
+            <div style="font-size:.52rem;color:#6e7681;margin-bottom:.1rem">SL Level</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:#f85149">${ls.sl.toFixed(2)}</div>
+          </div>
+          <div style="background:#161b22;border-radius:5px;padding:.25rem .4rem;text-align:center">
+            <div style="font-size:.52rem;color:#6e7681;margin-bottom:.1rem">Decay</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:${decayColor}">${decaySign}${ls.decay_pct}%</div>
+          </div>
+          <div style="background:#161b22;border-radius:5px;padding:.25rem .4rem;text-align:center">
+            <div style="font-size:.52rem;color:#6e7681;margin-bottom:.1rem">Max Decay</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:#58a6ff">${ls.max_decay_pct}%</div>
+          </div>
+        </div>
+        <div style="font-size:.58rem;font-weight:700;color:${tierColor};margin-bottom:.3rem;text-align:center;
+          background:${tierColor}18;border:1px solid ${tierColor}44;border-radius:5px;padding:.2rem">
+          Trail: ${ls.trail_label}
+        </div>
+        ${tierBars}
+        <div style="font-size:.55rem;color:#6e7681;text-align:right;margin-top:.2rem">${ls.ts}</div>
+      </div>`;
+  } else {
+    tp.innerHTML = '<div style="color:#6e7681;font-size:.7rem;text-align:center;padding:.4rem 0">No active trade</div>';
+  }
 
   // Positions
   const pl=document.getElementById('pos-list'); pl.innerHTML='';
