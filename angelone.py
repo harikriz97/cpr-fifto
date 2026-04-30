@@ -84,18 +84,36 @@ class AngelOneClient:
             })
         return sorted(rows, key=lambda x: x['date'])
 
+    def _ensure_session(self):
+        """Re-login if session was lost (e.g. after network dropout)."""
+        if not self.connected:
+            log.warning("Session lost — re-logging in...")
+            self.login()
+
     def get_nifty_ltp(self):
         """Get current NIFTY spot LTP."""
+        self._ensure_session()
         resp = self.api.ltpData(NSE_EXCHANGE, "Nifty 50", NIFTY_TOKEN)
         if not resp['status']:
-            raise RuntimeError(f"LTP fetch failed: {resp['message']}")
+            if 'session' in resp.get('message','').lower() or 'token' in resp.get('message','').lower():
+                self.connected = False
+                self._ensure_session()
+                resp = self.api.ltpData(NSE_EXCHANGE, "Nifty 50", NIFTY_TOKEN)
+            if not resp['status']:
+                raise RuntimeError(f"LTP fetch failed: {resp['message']}")
         return float(resp['data']['ltp'])
 
     def get_option_ltp(self, symbol_token, exchange=NFO_EXCHANGE):
         """Get LTP for an option using its symbol token."""
+        self._ensure_session()
         resp = self.api.ltpData(exchange, "", symbol_token)
         if not resp['status']:
-            raise RuntimeError(f"Option LTP failed: {resp['message']}")
+            if 'session' in resp.get('message','').lower() or 'token' in resp.get('message','').lower():
+                self.connected = False
+                self._ensure_session()
+                resp = self.api.ltpData(exchange, "", symbol_token)
+            if not resp['status']:
+                raise RuntimeError(f"Option LTP failed: {resp['message']}")
         return float(resp['data']['ltp'])
 
     def search_option_token(self, symbol_name):
