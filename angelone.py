@@ -22,7 +22,7 @@ NFO_EXCHANGE = "NFO"
 
 class AngelOneClient:
     def __init__(self):
-        self.api = SmartConnect(api_key=config.ANGELONE_API_KEY)
+        self.api = SmartConnect(api_key=config.ANGELONE_API_KEY, timeout=15)
         self.session = None
         self.connected = False
 

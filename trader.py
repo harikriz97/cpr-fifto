@@ -197,9 +197,10 @@ def _clear_live_state():
 
 def monitor_trade(angel, oa, symbol, token, state: TradeState,
                   sl_type, dry_run):
-    eod = datetime.now().replace(hour=15, minute=20, second=0, microsecond=0)
+    eod        = datetime.now().replace(hour=15, minute=20, second=0, microsecond=0)
     api_errors = 0
-    MAX_API_ERRORS = 5
+    MAX_API_ERRORS = 10  # increased from 5
+    cp = state.entry_price  # last known price fallback
 
     while True:
         time.sleep(POLL_SECS)
@@ -211,13 +212,28 @@ def monitor_trade(angel, oa, symbol, token, state: TradeState,
             api_errors = 0
         except Exception as e:
             api_errors += 1
-            log.warning(f"API error #{api_errors}: {e}")
+            wait = min(api_errors * 5, 30)  # backoff: 5s, 10s, 15s... max 30s
+            log.warning(f"API error #{api_errors}/{MAX_API_ERRORS}: {e} — retry in {wait}s")
             if api_errors >= MAX_API_ERRORS:
-                log.error(f"Too many API errors - forcing EOD exit {symbol}")
+                log.error(f"Too many API errors — squareoff {symbol} and exit")
+                if not dry_run:
+                    try: oa.squareoff(symbol, state.lots)
+                    except Exception as oe: log.error(f"Squareoff failed: {oe}")
+                # Get exit price from OpenAlgo if possible
+                try:
+                    positions = oa.get_positions()
+                    for p in positions:
+                        if p.get('symbol') == symbol:
+                            cp = float(p.get('ltp', cp))
+                            break
+                except: pass
+                state.eod_exit(cp)
+                _clear_live_state()
                 break
+            time.sleep(wait)
             continue
 
-        _write_live_state(symbol, cp, spot, state)  # update dashboard
+        _write_live_state(symbol, cp, spot, state)
 
         if now >= eod:
             state.eod_exit(cp)

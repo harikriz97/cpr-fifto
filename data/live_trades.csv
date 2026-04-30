@@ -1,2 +1,4 @@
-date,source,zone,bias,opt,symbol,entry_price,exit_price,exit_reason,pnl,dte
-2026-04-28,v17a,within_cpr,bull,PE,NIFTY05MAY2624100PE,244.85,246.5,lockin_sl,-107.25,7
+date,source,zone,bias,opt,symbol,entry_price,exit_price,exit_reason,pnl,dte,lots
+2026-04-28,v17a,within_cpr,bull,PE,NIFTY05MAY2624100PE,244.85,246.5,lockin_sl,-321.75,7,195.0
+2026-04-29,v17a,tc_to_pdh,bull,PE,NIFTY05MAY2624100PE,205.35,163.05,target,8248.5,6,195.0
+2026-04-30,intraday_v2,S2_break,,CE,NIFTY05MAY2623950CE,165.9,135.6,api_timeout_exit,5908.5,5,195.0
