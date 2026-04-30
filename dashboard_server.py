@@ -31,57 +31,78 @@ def _get_angel():
 def fetch():
     try:
         import time as t
-        from trader import compute_morning_setup, compute_signal, get_nearest_expiry
-        from strategy import get_strike
         import config
-        _strip_file_handlers()  # prevent writing to trader's log file
-        a    = _get_angel()
-        spot = a.get_nifty_ltp()
-        now  = datetime.now()
-        setup = compute_morning_setup(a)
+        import pandas as _pd
+        from core.levels import compute_cpr, compute_ema_series, classify_zone, ema_bias, r2
+        from core.signals import v17a_signal, v17a_params
+        from live.orders import build_option_symbol, get_ltp, get_strike
+        from live.trader import get_expiry
 
-        # Rule: compute signal only AFTER market opens (9:15 AM)
-        # Before 9:15, use pre-market LTP just for levels display — no signal
+        _strip_file_handlers()
+
+        # ── Get OHLC history from AngelOne ────────────────────────────
+        a       = _get_angel()
+        spot    = a.get_nifty_ltp()
+        history = a.get_nifty_ohlc_history(days=50)
+        now     = datetime.now()
+
+        # Build prev-day data
+        today_str = date.today().strftime('%Y-%m-%d')
+        last = str(history[-1].get('date',''))
+        if today_str in last:
+            prev    = history[-2]
+            closes  = [d['close'] for d in history[:-1]]
+        else:
+            prev    = history[-1]
+            closes  = [d['close'] for d in history]
+
+        pvt = compute_cpr(prev['high'], prev['low'], prev['close'])
+        pdh = r2(prev['high']); pdl = r2(prev['low'])
+
+        # EMA — use shifted value (prev EMA = signal input, no forward bias)
+        s = _pd.Series([d['close'] for d in history])
+        ema_series = compute_ema_series(s).shift(1)
+        ema_prev   = round(float(ema_series.iloc[-1]), 2)
+        prev_body  = r2(abs(prev['close'] - prev['open']) / prev['open'] * 100)
+
+        # ── Signal (only after 9:15 open) ─────────────────────────────
         market_open = now.hour > 9 or (now.hour == 9 and now.minute >= 15)
         if market_open:
-            ctx = compute_signal(setup, spot)
+            zone  = classify_zone(spot, pvt, pdh, pdl)
+            bias  = ema_bias(ema_prev, spot)
+            opt, sig_zone, etime = v17a_signal(spot, pvt, pdh, pdl, ema_prev)
+            # body filter
+            if prev_body <= config.BODY_MIN:
+                opt, sig_zone, etime = None, zone, ''
+            ctx = dict(zone=zone, bias=bias, signal=opt,
+                       pvt=pvt, pdh=pdh, pdl=pdl, spot_open=r2(spot), e20=ema_prev)
         else:
-            # Pre-market: show levels but no signal yet
-            from strategy import compute_pivots, classify_zone, r2
-            pvt_pre = compute_pivots(setup['pdh'], setup['pdl'],
-                                     spot)  # placeholder pivot, not used for signal
             ctx = dict(zone='pre_market', bias='--', signal=None,
-                       pvt=setup['pvt'], pdh=setup['pdh'], pdl=setup['pdl'],
-                       spot_open=r2(spot), e20=setup['e20'])
+                       pvt=pvt, pdh=pdh, pdl=pdl, spot_open=r2(spot), e20=ema_prev)
 
-        t.sleep(1)
-        expiry = get_nearest_expiry(a, spot)
-        atm    = int(round(spot/50)*50)
-        pvt    = ctx['pvt']
-        ti     = None
+        # ── Trade info ─────────────────────────────────────────────────
+        expiry = get_expiry("NIFTY")               # YYYYMMDD format
+        expiry_dt = datetime.strptime(expiry, '%Y%m%d').date()
+        dte       = (expiry_dt - date.today()).days
+        atm       = int(round(spot / config.INDICES["NIFTY"]["strike_int"]) * config.INDICES["NIFTY"]["strike_int"])
+
+        ti = None
         if ctx['signal']:
-            key = (ctx['zone'], ctx['bias'], ctx['signal'])
-            if key in config.V17A_PARAMS:
-                stype, etime, tgt, sl, sltype = config.V17A_PARAMS[key]
-                expiry_dt = datetime.strptime(expiry,'%d%b%y').date()
-                dte  = (expiry_dt - date.today()).days
-                skip = ctx['zone']=='tc_to_pdh' and dte < config.TC_TO_PDH_DTE_MIN
-                strike = get_strike(atm, ctx['signal'], stype)
-                sym  = f"NIFTY{expiry}{strike}{ctx['signal']}"
-                ltp  = None
+            zone = ctx['zone']
+            if zone in config.V17A_PARAMS:
+                opt_p, stype, tgt, sl, etime = config.V17A_PARAMS[zone]
+                opt = ctx['signal']
+                skip = zone == 'tc_to_pdh' and dte < config.TC_TO_PDH_DTE_MIN
+                strike = get_strike(spot, "NIFTY", opt, stype)
+                sym    = build_option_symbol("NIFTY", expiry, strike, opt)
+                ltp    = None
                 if not skip:
-                    try:
-                        t.sleep(1); tok = a.search_option_token(sym)
-                        ltp = a.get_option_ltp(tok)
+                    try: t.sleep(0.5); ltp = get_ltp("NIFTY", expiry, strike, opt)
                     except: pass
-                # Theory-based lot sizing preview
-                lot_mult = config.LOT_HIGH_MULT if (
-                    dte >= config.LOT_HIGH_DTE_MIN and ltp and ltp > config.LOT_HIGH_EP_MIN
-                ) else 1
-                lots_preview = config.LOT_SIZE * lot_mult
-                ti = dict(stype=stype,etime=etime,tgt=tgt,sl=sl,sltype=sltype,
-                          strike=strike,sym=sym,ltp=ltp,dte=dte,skip=skip,
-                          lot_mult=lot_mult,lots=lots_preview)
+                lots = config.score_to_lots(0, False)  # default 1x; real scoring in trader
+                ti = dict(stype=stype, etime=etime, tgt=tgt, sl=sl, sltype='pct',
+                          strike=strike, sym=sym, ltp=ltp, dte=dte, skip=skip,
+                          lot_mult=lots, lots=lots * config.INDICES["NIFTY"]["lot_size"])
         import pandas as pd
         path = os.path.join(os.path.dirname(__file__),'data','live_trades.csv')
         trades = []
@@ -102,18 +123,18 @@ def fetch():
         levels = [
             ("R4",pvt['r4'],"#f85149"),("R3",pvt['r3'],"#f85149"),
             ("R2",pvt['r2'],"#f85149"),("R1",pvt['r1'],"#f85149"),
-            ("PDH",setup['pdh'],"#e3b341"),
-            ("TC",pvt['tc'],"#58a6ff"),("PP",pvt['pp'],"#58a6ff"),("BC",pvt['bc'],"#58a6ff"),
-            ("PDL",setup['pdl'],"#e3b341"),
+            ("PDH",pdh,"#e3b341"),
+            ("TC",pvt['tc'],"#58a6ff"),("PP",pvt['pvt'],"#58a6ff"),("BC",pvt['bc'],"#58a6ff"),
+            ("PDL",pdl,"#e3b341"),
             ("S1",pvt['s1'],"#3fb950"),("S2",pvt['s2'],"#3fb950"),
             ("S3",pvt['s3'],"#3fb950"),("S4",pvt['s4'],"#3fb950"),
         ]
         lv = [{"n":n,"v":round(v,2),"c":c,"d":round(spot-v,1)} for n,v,c in levels]
 
         z = ctx['zone']
-        trend_v = 72 if any(x in z for x in ['r3','r4','above']) else 55 if 'r1' in z or 'r2' in z else 35
-        side_v  = 65 if any(x in z for x in ['cpr','pdh','pdl','within']) else 28
-        rev_v   = 78 if any(x in z for x in ['below','s4','s3']) else 40
+        trend_v = 72 if any(x in z for x in ['r2_plus','r1_to_r2']) else 55 if 'pdh' in z else 35
+        side_v  = 65 if any(x in z for x in ['cpr','pdh','pdl','within','bc']) else 28
+        rev_v   = 78 if any(x in z for x in ['below','s4','s3','s2']) else 40
         wr_v    = 68 if ctx['signal'] else 48
 
         # Fetch intraday 1-min OHLC for chart
@@ -169,9 +190,12 @@ def fetch():
                 except: pass
         except: pass
 
-        return dict(spot=spot, ema=setup['e20'], pdh=setup['pdh'], pdl=setup['pdl'],
+        # Expiry display format (YYYYMMDD → DDMMMYY for display)
+        expiry_disp = datetime.strptime(expiry,'%Y%m%d').strftime('%d%b%y').upper()
+
+        return dict(spot=spot, ema=ema_prev, pdh=pdh, pdl=pdl,
                     zone=z, bias=ctx['bias'], signal=ctx.get('signal','') or '',
-                    expiry=expiry, atm=atm, levels=lv, candles=candles,
+                    expiry=expiry_disp, atm=atm, levels=lv, candles=candles,
                     ti=ti, trades=trades, pnl_today=pnl_today, oa_ok=oa_ok,
                     gauges=dict(trend=trend_v,side=side_v,rev=rev_v,wr=wr_v),
                     live_state=live_state,
