@@ -164,6 +164,37 @@ def compute_signal(setup: dict, spot_open: float) -> dict:
 
 
 # ── Monitor loop (shared by v17a + intraday v2) ────────────────────
+def _write_live_state(symbol, cp, spot, state, status='open'):
+    """Write current trade state to data/live_state.json for dashboard."""
+    try:
+        import json
+        os.makedirs('data', exist_ok=True)
+        decay_pct = round((state.entry_price - cp) / state.entry_price * 100, 1)
+        upnl = round((state.entry_price - cp) * state.lots, 0)
+        data = dict(
+            symbol=symbol, status=status,
+            entry=state.entry_price, current=cp, spot=spot or 0,
+            sl=state.sl_level, hard_sl=state.hard_sl,
+            target=state.target,
+            trail_tier=state.trail_tier,
+            trail_label=state.trail_label(),
+            decay_pct=decay_pct,
+            max_decay_pct=round(state.max_decay * 100, 1),
+            upnl=upnl,
+            lots=state.lots,
+            ts=datetime.now().strftime('%H:%M:%S')
+        )
+        with open(os.path.join('data', 'live_state.json'), 'w') as f:
+            json.dump(data, f)
+    except: pass
+
+def _clear_live_state():
+    """Clear live state when trade ends."""
+    try:
+        p = os.path.join('data', 'live_state.json')
+        if os.path.exists(p): os.remove(p)
+    except: pass
+
 def monitor_trade(angel, oa, symbol, token, state: TradeState,
                   sl_type, dry_run):
     eod = datetime.now().replace(hour=15, minute=20, second=0, microsecond=0)
@@ -177,7 +208,7 @@ def monitor_trade(angel, oa, symbol, token, state: TradeState,
         try:
             cp   = angel.get_option_ltp(token)
             spot = angel.get_nifty_ltp() if sl_type == 'spot' else None
-            api_errors = 0  # reset on success
+            api_errors = 0
         except Exception as e:
             api_errors += 1
             log.warning(f"API error #{api_errors}: {e}")
@@ -186,10 +217,13 @@ def monitor_trade(angel, oa, symbol, token, state: TradeState,
                 break
             continue
 
+        _write_live_state(symbol, cp, spot, state)  # update dashboard
+
         if now >= eod:
             state.eod_exit(cp)
             log.info(f"EOD exit {symbol}  cp={cp}  pnl=Rs.{state.pnl:,.0f}")
-            if not dry_run: oa.squareoff(symbol, config.LOT_SIZE)
+            if not dry_run: oa.squareoff(symbol, state.lots)
+            _clear_live_state()
             break
 
         act, reason = state.update(cp, spot)
@@ -199,7 +233,8 @@ def monitor_trade(angel, oa, symbol, token, state: TradeState,
 
         if act == 'exit':
             log.info(f"Exit [{reason}] {symbol}  cp={cp}  pnl=Rs.{state.pnl:,.0f}")
-            if not dry_run: oa.squareoff(symbol, config.LOT_SIZE)
+            if not dry_run: oa.squareoff(symbol, state.lots)
+            _clear_live_state()
             break
 
 
@@ -234,9 +269,8 @@ def run_v17a(angel, oa, ctx, dry_run):
         log.info(f"IV filter fail: {iv:.3f}%"); return
 
     spot_sl = r2(ctx['pdh'] + sl_param) if sl_type == 'spot' else None
-    state   = TradeState(ep, tgt_pct, sl_param, sl_type, spot_sl)
-
-    lots = get_lots(dte, ep)
+    lots    = get_lots(dte, ep)
+    state   = TradeState(ep, tgt_pct, sl_param, sl_type, spot_sl, lots=lots)
     log.info(f"v17a SELL {symbol}  ep={ep}  target={state.target}"
              f"  sl={state.hard_sl}  spot_sl={spot_sl}  lots={lots}")
     if not dry_run: oa.place_sell_order(symbol, lots)
@@ -299,8 +333,8 @@ def run_intraday_v2(angel, oa, ctx, dry_run):
     token     = angel.search_option_token(symbol)
     ep        = angel.get_option_ltp(token)
 
-    state  = TradeState(ep, tgt_pct, sl_pct, 'pct')
     lots   = get_lots(dte, ep)
+    state  = TradeState(ep, tgt_pct, sl_pct, 'pct', lots=lots)
     log.info(f"Intraday SELL {symbol}  ep={ep}  target={state.target}"
              f"  sl={state.hard_sl}  DTE={dte}  lots={lots}")
     if not dry_run: oa.place_sell_order(symbol, lots)

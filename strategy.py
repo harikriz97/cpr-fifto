@@ -127,7 +127,7 @@ class TradeState:
     """Manages a single open short option position."""
 
     def __init__(self, entry_price, target_pct, sl_param, sl_type,
-                 spot_sl_level=None):
+                 spot_sl_level=None, lots=None):
         self.entry_price   = entry_price
         self.target        = r2(entry_price * (1 - target_pct))
         self.sl_type       = sl_type
@@ -136,24 +136,25 @@ class TradeState:
         self.sl_level      = self.hard_sl
         self.max_decay     = 0.0
         self.spot_sl_level  = spot_sl_level
+        self.lots           = lots if lots is not None else LOT_SIZE
         self.is_open        = True
         self.exit_reason    = None
         self.exit_price     = None
         self.trail_tier     = 0    # 0=none, 1=BE(25%), 2=80%(40%), 3=95%(60%)
-        self._current_price = None # initialise so unrealised_pnl never raises AttributeError
+        self._current_price = None
 
     @property
     def pnl(self):
         if self.exit_price is None:
             return None
-        return r2((self.entry_price - self.exit_price) * LOT_SIZE)
+        return r2((self.entry_price - self.exit_price) * self.lots)
 
     @property
     def unrealised_pnl(self):
         """P&L if closed at current price (call update first)."""
         if self._current_price is None:
             return None
-        return r2((self.entry_price - self._current_price) * LOT_SIZE)
+        return r2((self.entry_price - self._current_price) * self.lots)
 
     def update(self, option_price, spot_price=None):
         """
