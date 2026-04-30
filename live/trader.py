@@ -54,7 +54,7 @@ from core import (
 )
 from live.orders import (
     TrailingSL, place_sell_order, place_buy_order,
-    get_ltp, get_spot_ltp, get_strike,
+    get_strike, build_option_symbol,
 )
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -70,9 +70,43 @@ logging.basicConfig(
 log = logging.getLogger("trader")
 IST = ZoneInfo("Asia/Kolkata")
 
-TICK_SLEEP  = 1.0    # seconds between tick polls
-MARKET_OPEN = dtime(9, 15)
+TICK_SLEEP   = 1.0
+MARKET_OPEN  = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
+
+# ── AngelOne client (used for all market data) ─────────────────────────────────
+_angel = None
+
+def get_angel():
+    global _angel
+    if _angel is None:
+        from angelone import AngelOneClient
+        _angel = AngelOneClient()
+        _angel.login()
+    return _angel
+
+def get_spot_ltp(index: str) -> float | None:
+    """Get NIFTY/SENSEX spot via AngelOne."""
+    try:
+        a = get_angel()
+        return a.get_nifty_ltp()
+    except Exception as e:
+        log.warning("get_spot_ltp failed: %s", e)
+        return None
+
+def get_ltp(index: str, expiry: str, strike: int, opt: str) -> float | None:
+    """Get option LTP via AngelOne token search."""
+    try:
+        a  = get_angel()
+        # expiry is YYYYMMDD, need DDMMMYY for Angel One
+        from datetime import datetime as _dt
+        exp_ao = _dt.strptime(expiry, '%Y%m%d').strftime('%d%b%y').upper()
+        sym    = f"{index}{exp_ao}{strike}{opt}"
+        tok    = a.search_option_token(sym)
+        return a.get_option_ltp(tok)
+    except Exception as e:
+        log.warning("get_ltp failed (%s%s): %s", strike, opt, e)
+        return None
 
 
 # ── CSV trade log ─────────────────────────────────────────────────────────────
