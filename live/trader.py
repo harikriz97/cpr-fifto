@@ -342,20 +342,24 @@ def run_trading_day():
 
     def handle_signal(strategy: str, zone: str, opt: str,
                       stype: str, tgt_pct: float, sl_pct: float):
-        """Enter trade on NIFTY (and SENSEX if dual_mode)."""
+        """Enter trade on NIFTY. signal_taken=True only on successful order."""
         nonlocal signal_taken
         log.info("SIGNAL: %s zone=%s opt=%s stype=%s", strategy, zone, opt, stype)
         pos_n = enter_trade("NIFTY", strategy, zone, opt, stype, tgt_pct, sl_pct)
         if pos_n:
             positions.append(pos_n)
+            signal_taken = True   # only set if order succeeded
         if dual_mode and strategy in ("v17a", "cam_l3", "cam_h3"):
             pos_s = enter_trade("SENSEX", strategy, zone, opt, stype, tgt_pct, sl_pct)
             if pos_s:
                 positions.append(pos_s)
-        signal_taken = True
 
     # ── Wait for market open ──────────────────────────────────────────────────
-    log.info("Waiting for market open...")
+    now_check = datetime.now(IST).time()
+    if now_check >= EOD_EXIT_TIME:
+        log.info("Already past EOD (%s). Not trading today.", now_check)
+        return
+    log.info("Waiting for market open (09:15)...")
     while True:
         now = datetime.now(IST).time()
         if now >= MARKET_OPEN:

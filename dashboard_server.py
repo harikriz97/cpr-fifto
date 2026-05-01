@@ -65,13 +65,31 @@ def fetch():
         ema_prev   = round(float(ema_series.iloc[-1]), 2)
         prev_body  = r2(abs(prev['close'] - prev['open']) / prev['open'] * 100)
 
+        # ── Confluence (conviction) features ──────────────────────────
+        from core.levels import compute_features
+        hist_rows = []
+        for h in history:
+            c = compute_cpr(h['high'], h['low'], h['close'])
+            hist_rows.append(dict(date=str(h['date'])[:10], open=h['open'],
+                high=h['high'], low=h['low'], close=h['close'], vix=0.0,
+                **c, pvt=c['pvt'], cpr_mid=(c['tc']+c['bc'])/2))
+        hist_df = _pd.DataFrame(hist_rows)
+        hist_df['ema'] = compute_ema_series(hist_df['close']).shift(1)
+        feats = compute_features(hist_df.dropna(subset=['ema']).reset_index(drop=True),
+                                 len(hist_df.dropna(subset=['ema'])) - 1) \
+                if len(hist_df.dropna(subset=['ema'])) >= 4 \
+                else dict(score=0, inside_cpr=False, vix_ok=False,
+                          cpr_trend_aligned=False, consec_aligned=False,
+                          cpr_gap_aligned=False, dte_sweet=False,
+                          cpr_narrow=False, cpr_dir_aligned=False)
+        lots_preview = config.score_to_lots(feats['score'], feats['inside_cpr'])
+
         # ── Signal (only after 9:15 open) ─────────────────────────────
         market_open = now.hour > 9 or (now.hour == 9 and now.minute >= 15)
         if market_open:
             zone  = classify_zone(spot, pvt, pdh, pdl)
             bias  = ema_bias(ema_prev, spot)
             opt, sig_zone, etime = v17a_signal(spot, pvt, pdh, pdl, ema_prev)
-            # body filter
             if prev_body <= config.BODY_MIN:
                 opt, sig_zone, etime = None, zone, ''
             ctx = dict(zone=zone, bias=bias, signal=opt,
@@ -99,10 +117,10 @@ def fetch():
                 if not skip:
                     try: t.sleep(0.5); ltp = get_ltp("NIFTY", expiry, strike, opt)
                     except: pass
-                lots = config.score_to_lots(0, False)  # default 1x; real scoring in trader
                 ti = dict(stype=stype, etime=etime, tgt=tgt, sl=sl, sltype='pct',
                           strike=strike, sym=sym, ltp=ltp, dte=dte, skip=skip,
-                          lot_mult=lots, lots=lots * config.INDICES["NIFTY"]["lot_size"])
+                          lot_mult=lots_preview,
+                          lots=lots_preview * config.INDICES["NIFTY"]["lot_size"])
         import pandas as pd
         path = os.path.join(os.path.dirname(__file__),'data','live_trades.csv')
         trades = []
@@ -198,6 +216,7 @@ def fetch():
                     expiry=expiry_disp, atm=atm, levels=lv, candles=candles,
                     ti=ti, trades=trades, pnl_today=pnl_today, oa_ok=oa_ok,
                     gauges=dict(trend=trend_v,side=side_v,rev=rev_v,wr=wr_v),
+                    feats=feats, lots_preview=lots_preview,
                     live_state=live_state,
                     ts=datetime.now().strftime('%H:%M:%S'))
     except Exception as e:
@@ -472,6 +491,12 @@ canvas.g{display:block;flex-shrink:0}
         <div class="mini-b"><div class="mini-l">Exchange</div><div class="mini-v" style="color:#58a6ff">NFO</div></div>
         <div class="mini-b"><div class="mini-l">Mode</div><div class="mini-v" style="color:#3fb950">PAPER</div></div>
         <div class="mini-b"><div class="mini-l">Expiry</div><div class="mini-v" id="rp-expiry" style="color:#8b949e;font-size:.58rem">--</div></div>
+      </div>
+    </div>
+    <div class="rp-sec">
+      <div class="rp-lbl">Confluence Score</div>
+      <div id="confluence-panel">
+        <div style="color:#6e7681;font-size:.7rem;text-align:center">Loading...</div>
       </div>
     </div>
     <div class="rp-sec">
@@ -781,6 +806,43 @@ function render(d) {
   const multEl = document.getElementById('rp-mult');
   if(lotsEl) { lotsEl.textContent=lots; lotsEl.style.color=mult>1?'#e3b341':'#58a6ff'; }
   if(multEl) { multEl.textContent=mult+'x'; multEl.style.color=mult>1?'#e3b341':'#3fb950'; }
+
+  // Confluence score panel
+  const cp = document.getElementById('confluence-panel');
+  if(cp && d.feats){
+    const f = d.feats;
+    const score = f.score || 0;
+    const scoreCol = score >= 5 ? '#3fb950' : score >= 3 ? '#e3b341' : '#f85149';
+    const lots = d.lots_preview || 1;
+    const lotsCol = lots >= 3 ? '#e3b341' : lots === 2 ? '#58a6ff' : '#8b949e';
+    const checks = [
+      ['VIX OK (<20)',        f.vix_ok],
+      ['CPR Trend Aligned',   f.cpr_trend_aligned],
+      ['2 Consec Closes',     f.consec_aligned],
+      ['Gap Aligned',         f.cpr_gap_aligned],
+      ['DTE Sweet (2-6)',     f.dte_sweet],
+      ['CPR Narrow',          f.cpr_narrow],
+      ['CPR Dir Aligned',     f.cpr_dir_aligned],
+    ];
+    const rows = checks.map(([lbl, val]) =>
+      `<div style="display:flex;align-items:center;justify-content:space-between;padding:.18rem 0;border-bottom:1px solid #21262d1a">
+        <span style="font-size:.6rem;color:${val?'#c9d1d9':'#6e7681'}">${lbl}</span>
+        <span style="font-size:.65rem;font-weight:700;color:${val?'#3fb950':'#30363d'}">${val?'✓':'—'}</span>
+      </div>`
+    ).join('');
+    cp.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem">
+        <div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:1.4rem;font-weight:700;color:${scoreCol}">${score}</span>
+          <span style="font-size:.6rem;color:#6e7681">/7</span>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:700;color:${lotsCol}">${lots}x lots</div>
+          <div style="font-size:.55rem;color:#6e7681">${f.inside_cpr?'inside CPR -1':''}</div>
+        </div>
+      </div>
+      <div style="background:#0d1117;border-radius:5px;padding:.3rem .4rem">${rows}</div>`;
+  }
 
   // Live trail status
   const tp = document.getElementById('trail-panel');

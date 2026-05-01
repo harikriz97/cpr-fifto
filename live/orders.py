@@ -54,14 +54,15 @@ def _get(endpoint: str, params: dict = None) -> dict:
 # ── Symbol helpers ────────────────────────────────────────────────────────────
 def build_option_symbol(index: str, expiry_date: str, strike: int, opt: str) -> str:
     """
-    Build option symbol for OpenAlgo.
+    Build option symbol for OpenAlgo (DDMMMYY format).
     index:       'NIFTY' or 'SENSEX'
     expiry_date: 'YYYYMMDD'
     strike:      integer strike price
     opt:         'CE' or 'PE'
-    Returns e.g. 'NIFTY20261002550CE'
+    Returns e.g. 'NIFTY05MAY2623950PE'
     """
-    exp = expiry_date[2:]   # YYMMDD
+    from datetime import datetime as _dt
+    exp = _dt.strptime(expiry_date, '%Y%m%d').strftime('%d%b%y').upper()
     return f"{index}{exp}{strike}{opt}"
 
 
