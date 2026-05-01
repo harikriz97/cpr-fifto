@@ -9,6 +9,12 @@ import os, sys
 
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
+def _zero_feats():
+    return dict(score=0, inside_cpr=False, vix_ok=False,
+                cpr_trend_aligned=False, consec_aligned=False,
+                cpr_gap_aligned=False, dte_sweet=False,
+                cpr_narrow=False, cpr_dir_aligned=False)
+
 def _strip_file_handlers():
     """Remove FileHandlers from root logger so dashboard doesn't write to trader log."""
     root = logging.getLogger()
@@ -67,21 +73,20 @@ def fetch():
 
         # ── Confluence (conviction) features ──────────────────────────
         from core.levels import compute_features
-        hist_rows = []
-        for h in history:
-            c = compute_cpr(h['high'], h['low'], h['close'])
-            hist_rows.append(dict(date=str(h['date'])[:10], open=h['open'],
-                high=h['high'], low=h['low'], close=h['close'], vix=0.0,
-                **c, pvt=c['pvt'], cpr_mid=(c['tc']+c['bc'])/2))
-        hist_df = _pd.DataFrame(hist_rows)
-        hist_df['ema'] = compute_ema_series(hist_df['close']).shift(1)
-        feats = compute_features(hist_df.dropna(subset=['ema']).reset_index(drop=True),
-                                 len(hist_df.dropna(subset=['ema'])) - 1) \
-                if len(hist_df.dropna(subset=['ema'])) >= 4 \
-                else dict(score=0, inside_cpr=False, vix_ok=False,
-                          cpr_trend_aligned=False, consec_aligned=False,
-                          cpr_gap_aligned=False, dte_sweet=False,
-                          cpr_narrow=False, cpr_dir_aligned=False)
+        try:
+            hist_rows = []
+            for h in history:
+                c = compute_cpr(h['high'], h['low'], h['close'])
+                hist_rows.append(dict(date=str(h['date'])[:10], open=h['open'],
+                    high=h['high'], low=h['low'], close=h['close'], vix=0.0,
+                    **c, pvt=c['pvt'], cpr_mid=(c['tc']+c['bc'])/2))
+            hist_df = _pd.DataFrame(hist_rows)
+            hist_df['ema'] = compute_ema_series(hist_df['close']).shift(1)
+            hist_clean = hist_df.dropna(subset=['ema']).reset_index(drop=True)
+            feats = compute_features(hist_clean, len(hist_clean)-1) \
+                    if len(hist_clean) >= 4 else _zero_feats()
+        except Exception:
+            feats = _zero_feats()
         lots_preview = config.score_to_lots(feats['score'], feats['inside_cpr'])
 
         # ── Signal (only after 9:15 open) ─────────────────────────────
@@ -223,11 +228,11 @@ def fetch():
         return {"error": str(e)}
 
 def bg_fetch():
-    # Only refresh during market hours; longer interval to avoid rate limits
+    # Wait 60s before first fetch so trader gets Angel One session first
+    time.sleep(60)
     while True:
         try:
             h = datetime.now().hour
-            # Refresh only 8:45 AM to 3:30 PM IST, every 120 seconds
             if 8 <= h < 16:
                 _cache['data'] = fetch()
                 _cache['ts']   = time.time()

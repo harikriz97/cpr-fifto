@@ -180,19 +180,34 @@ def load_daily_ohlc(index: str, n_bars: int = EMA_SEED + 10) -> pd.DataFrame:
 
 def get_expiry(index: str) -> str:
     """
-    Return nearest weekly expiry (YYYYMMDD). Skips DTE=0.
-    NIFTY: Tuesday (weekday 1), Monday (weekday 0) when Tuesday is holiday.
-    SENSEX: Friday (weekday 4).
+    Return nearest valid weekly expiry (YYYYMMDD).
+    Validates by searching Angel One for a real contract token.
+    NIFTY: Tuesday (Mon if holiday). SENSEX: Friday.
     """
     today = date.today()
-    if index == "NIFTY":
-        target_days = (1, 0)   # Tuesday primary, Monday fallback
-    else:
-        target_days = (4,)     # Friday for SENSEX
+    a     = get_angel()
+    si    = 50  # strike interval for validation
+    # rough ATM estimate
+    try:
+        spot = a.get_nifty_ltp()
+        atm  = int(round(spot / si) * si)
+    except Exception:
+        atm  = 24000
+
+    target_days = (1, 0) if index == "NIFTY" else (4,)
     for delta in range(1, 14):
         d = today + timedelta(days=delta)
-        if d.weekday() in target_days:
-            return d.strftime("%Y%m%d")
+        if d.weekday() not in target_days:
+            continue
+        expiry_yyyymmdd = d.strftime("%Y%m%d")
+        expiry_ddmmyy   = d.strftime("%d%b%y").upper()
+        sym = f"{index}{expiry_ddmmyy}{atm}CE"
+        try:
+            a.search_option_token(sym)
+            return expiry_yyyymmdd   # contract exists — valid expiry
+        except Exception:
+            continue                 # no contract — try next week
+    # fallback: 7 days ahead
     return (today + timedelta(days=7)).strftime("%Y%m%d")
 
 
