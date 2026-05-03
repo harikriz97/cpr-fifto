@@ -44,7 +44,11 @@ TELEGRAM_CHAT_ID = "859972630"
 
 # ── Output paths ─────────────────────────────────────────────────────────────
 import os
-_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_base      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR   = os.path.join(_base, "data")
+REPORT_DIR = os.path.join(_base, "data", "reports")
+os.makedirs(DATA_DIR,   exist_ok=True)
+os.makedirs(REPORT_DIR, exist_ok=True)
 LOG_CSV    = os.path.join(_base, "data", "paper_trades.csv")
 STATE_FILE = os.path.join(_base, "data", "live_state.json")
 OHLC_CACHE = os.path.join(_base, "data", "ohlc_cache.csv")
