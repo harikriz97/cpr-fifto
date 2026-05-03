@@ -760,6 +760,16 @@ def main():
     finally:
         client.stop_websocket()
         print_paper_summary()
+        # Export daily Excel report
+        try:
+            from export_excel import export_daily_excel
+            path = export_daily_excel()
+            if path:
+                logger.info("Daily Excel exported: %s", path)
+                import subprocess
+                subprocess.Popen(["start", "", path], shell=True)
+        except Exception as e:
+            logger.warning("Excel export failed: %s", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
