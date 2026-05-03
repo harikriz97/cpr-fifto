@@ -2,7 +2,7 @@
 FIFTO Dashboard Server - Standalone HTML (port 8080)
 Run: python dashboard_server.py
 """
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, Response
 import threading, time, logging
 from datetime import datetime, date
 import os, sys
@@ -1021,7 +1021,8 @@ setInterval(()=>{
 
 @app.route('/')
 def index():
-    return render_template_string(HTML)
+    # Return HTML directly — avoids Jinja2 parsing {{ }} in JavaScript
+    return Response(HTML, mimetype='text/html')
 
 if __name__ == '__main__':
     sys.path.insert(0, os.path.dirname(__file__))
