@@ -37,8 +37,18 @@ except ImportError:
 # ── Core send ──────────────────────────────────────────────────────────────────
 def send(text: str, parse_mode: str = "HTML") -> bool:
     """Send message to Telegram. Returns True on success."""
-    token   = TELEGRAM_TOKEN   or os.getenv("TELEGRAM_TOKEN", "")
-    chat_id = TELEGRAM_CHAT_ID or os.getenv("TELEGRAM_CHAT_ID", "")
+    # Load token/chat_id from live/config.py (same folder as this file)
+    try:
+        import importlib.util
+        _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.py")
+        _spec     = importlib.util.spec_from_file_location("live_config", _cfg_path)
+        _cfg      = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_cfg)
+        token   = getattr(_cfg, "TELEGRAM_TOKEN",   "") or os.getenv("TELEGRAM_TOKEN",   "")
+        chat_id = getattr(_cfg, "TELEGRAM_CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
+    except Exception:
+        token   = TELEGRAM_TOKEN   or os.getenv("TELEGRAM_TOKEN",   "")
+        chat_id = TELEGRAM_CHAT_ID or os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         logger.debug("Telegram not configured — skipping alert")
         return False
@@ -259,26 +269,18 @@ def setup():
     """Print setup instructions and auto-detect chat_id."""
     print("\nTelegram Bot Setup")
     print("==================")
-    token = TELEGRAM_TOKEN or input("Enter bot token: ").strip()
-    print(f"\nUsing token: {token[:20]}...")
+    _token = TELEGRAM_TOKEN or input("Enter bot token: ").strip()
+    print(f"\nUsing token: {_token[:20]}...")
     print("\n1. Open Telegram")
     print("2. Search for your bot")
     print("3. Send /start to it")
     input("Press Enter after sending /start...")
-
-    global TELEGRAM_TOKEN
-    TELEGRAM_TOKEN = token
     chat_id = get_chat_id()
     if chat_id:
         print(f"\nchat_id = {chat_id}")
         print(f"\nAdd to live/config.py:")
-        print(f'TELEGRAM_TOKEN   = "{token}"')
+        print(f'TELEGRAM_TOKEN   = "{_token}"')
         print(f'TELEGRAM_CHAT_ID = "{chat_id}"')
-        # Test message
-        from importlib import import_module
-        import config
-        config.TELEGRAM_TOKEN   = token
-        config.TELEGRAM_CHAT_ID = chat_id
         send("FIFTO bot connected! Trade alerts active.")
         print("\nTest message sent!")
     else:

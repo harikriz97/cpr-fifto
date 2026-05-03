@@ -39,8 +39,8 @@ MRC_CE_LOTS = 0
 
 # ── Telegram alerts ───────────────────────────────────────────────────────────
 # Get token from @BotFather. Get chat_id: python live/telegram_alert.py --setup
-TELEGRAM_TOKEN   = ""   # e.g. "7476365992:AAGK9c4K1..."
-TELEGRAM_CHAT_ID = ""   # e.g. "123456789"
+TELEGRAM_TOKEN   = "8503444737:AAERfwtIl_TAARNhUsbl6u0QoHxrSn0bTQY"
+TELEGRAM_CHAT_ID = "859972630"
 
 # ── Output paths ─────────────────────────────────────────────────────────────
 import os
