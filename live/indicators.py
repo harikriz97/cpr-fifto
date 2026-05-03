@@ -187,11 +187,14 @@ def compute_score7(features: dict) -> int:
 
 def score_to_lots(score: int, inside_cpr: bool = False) -> int:
     """
-    Convert score7 to lot count with inside_cpr negative filter.
-    score 0-1 → 1 lot, 2-3 → 2 lots, 4+ → 3 lots
-    inside_cpr reduces by 1 (min 1).
+    Convert score7 to lot count.
+    score 0-1 → 1 lot, 2-3 → 2 lots, 4-5,7 → 3 lots
+    score 6   → 0 = SKIP (structural negative over 5yr backtest)
+    inside_cpr reduces by 1 (min 1, but 0 stays 0).
     """
     base_lots = SCORE_LOT_MAP.get(min(score, 7), 1)
+    if base_lots == 0:
+        return 0   # score==6: do not trade
     if inside_cpr:
         base_lots = max(1, base_lots - 1)
     return base_lots

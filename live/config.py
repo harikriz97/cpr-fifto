@@ -30,11 +30,17 @@ MRC_SCAN_START   = "09:15:00"
 MRC_SCAN_END     = "12:00:00"
 
 # ── Score7 lot sizing ─────────────────────────────────────────────────────────
-SCORE_LOT_MAP = {0: 1, 1: 1, 2: 2, 3: 2, 4: 3, 5: 3, 6: 3, 7: 3}
+SCORE_LOT_MAP = {0: 1, 1: 1, 2: 2, 3: 2, 4: 3, 5: 3, 6: 0, 7: 3}
+# score 6 → 0 = SKIP TRADE (net negative over 5yr backtest)
 
 # ── MRC lot override ──────────────────────────────────────────────────────────
 MRC_PE_LOTS = 2
 MRC_CE_LOTS = 0
+
+# ── Telegram alerts ───────────────────────────────────────────────────────────
+# Get token from @BotFather. Get chat_id: python live/telegram_alert.py --setup
+TELEGRAM_TOKEN   = ""   # e.g. "7476365992:AAGK9c4K1..."
+TELEGRAM_CHAT_ID = ""   # e.g. "123456789"
 
 # ── Output paths ─────────────────────────────────────────────────────────────
 import os

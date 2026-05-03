@@ -226,6 +226,27 @@ class AngelClient:
         """Convenience: get NIFTY 50 index LTP."""
         return self.get_ltp(NSE, "Nifty 50", NIFTY_SPOT_TOKEN)
 
+    def find_futures_token(self, index: str = "NIFTY") -> tuple[str, str] | tuple[None, None]:
+        """Find nearest expiry futures (token, symbol) from scrip master."""
+        try:
+            self._load_scrip_master()
+            df = self._scrip_df
+            mask = (
+                (df["exch_seg"].str.upper() == "NFO") &
+                (df["name"].str.upper() == index.upper()) &
+                (df["instrumenttype"].str.upper().isin(["FUTIDX", "FUTSTK"]))
+            )
+            fut = df[mask].sort_values("expiry")
+            if fut.empty:
+                return None, None
+            token = str(fut.iloc[0]["token"])
+            sym   = str(fut.iloc[0]["symbol"])
+            logger.info(f"Futures token found: {sym} = {token}")
+            return token, sym
+        except Exception as e:
+            logger.warning(f"find_futures_token failed: {e}")
+            return None, None
+
     # ── WebSocket / Polling ───────────────────────────────────────────────────
     def start_websocket(self, token_list: list, on_tick_callback,
                         mode: int = MODE_LTP, poll_interval: float = 1.0):

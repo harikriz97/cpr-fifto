@@ -50,8 +50,11 @@ class TradeManager:
         self.signal       = signal
         self.lots         = signal.get("lots", 1)
         self.ep           = r2(entry_price)
-        self.tgt          = r2(self.ep * (1 - TGT_PCT))
-        self.hsl          = r2(self.ep * 2.0)       # 100% above entry = unreachable hard cap
+        # Use signal-specific tgt/sl; fall back to config TGT_PCT only if missing
+        tgt_pct           = signal.get("tgt_pct", TGT_PCT)
+        sl_pct            = signal.get("sl_pct",  1.00)
+        self.tgt          = r2(self.ep * (1 - tgt_pct))
+        self.hsl          = r2(self.ep * (1 + sl_pct))  # hard SL above entry
         self.sl           = self.hsl                  # starts at hard SL
         self.max_decline  = 0.0                       # max (ep - price) / ep so far
         self.state        = self.ACTIVE

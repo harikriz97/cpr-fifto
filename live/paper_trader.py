@@ -45,6 +45,11 @@ from signal_crt     import CRTScanner
 from signal_mrc     import MRCScanner
 from signal_base    import BaseScanner
 from trade_manager  import TradeManager, print_paper_summary
+from telegram_alert import (
+    alert_entry, alert_exit, alert_pnl_update,
+    alert_s4_watching, alert_contra_watching, alert_eod_summary,
+    start_pnl_updates, stop_pnl_updates,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -421,9 +426,24 @@ def on_option_tick(message: dict, state: DayState, client: AngelClient):
     if result:
         state.trade_entered = False
         _clear_live_state()
+        stop_pnl_updates()
         logger.info(
             f"Trade done. P&L: Rs.{result['pnl']:,.0f} | exit={result['exit_reason']}"
         )
+        # Telegram exit alert
+        try:
+            sig = state.active_trade.signal if state.active_trade else {}
+            alert_exit(
+                signal  = sig.get("signal", sig.get("strategy", "")),
+                opt     = result.get("opt", sig.get("opt", "")),
+                strike  = result.get("strike", sig.get("strike", 0)),
+                ep      = result.get("ep", 0),
+                xp      = result.get("exit_price", 0),
+                reason  = result.get("exit_reason", ""),
+                pnl     = result.get("pnl", 0),
+                lots    = sig.get("lots", 1),
+            )
+        except Exception: pass
 
         # ── After target exit: watch for S4 re-entry ─────────────────────────
         if result["exit_reason"] == "target" and time_str < REENTRY_CUT:
@@ -436,6 +456,10 @@ def on_option_tick(message: dict, state: DayState, client: AngelClient):
                 f"S4 watching: {state.s4_opt} {state.s4_strike} ep={state.s4_ep:.0f} "
                 f"window=[{state.s4_ep * S4_PB_LO:.0f}, {state.s4_ep * S4_PB_HI:.0f}]"
             )
+            try:
+                alert_s4_watching(state.s4_opt, state.s4_strike, state.s4_ep,
+                                  state.s4_ep * S4_PB_LO, state.s4_ep * S4_PB_HI)
+            except Exception: pass
 
         # ── After hard_sl exit: watch for contra pullback ─────────────────────
         elif result["exit_reason"] == "hard_sl" and time_str < CONTRA_CUT:
@@ -450,6 +474,9 @@ def on_option_tick(message: dict, state: DayState, client: AngelClient):
                 f"trigger=[{state.last_spot_price - CONTRA_PULL_TOL:.0f}, "
                 f"{state.last_spot_price + CONTRA_PULL_TOL:.0f}]"
             )
+            try:
+                alert_contra_watching(contra_opt, state.last_spot_price)
+            except Exception: pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -643,10 +670,43 @@ def _enter_trade(signal: dict, state: DayState,
     state.trade_entered = True
     state.option_token  = option_token
 
+    tm = state.active_trade
     logger.info(
         f"Trade entered: {option_symbol} @ Rs.{ep} "
         f"(lots={signal.get('lots',1)})"
     )
+
+    # Telegram entry alert
+    try:
+        expiry_dt = datetime.strptime(state.expiry, "%Y%m%d")
+        dte_val   = (expiry_dt.date() - datetime.today().date()).days
+        alert_entry(
+            signal      = signal.get("signal", signal.get("strategy", "")),
+            strategy    = signal.get("strategy", ""),
+            opt         = opt,
+            strike      = strike,
+            expiry      = expiry_dt.strftime("%d%b%y").upper(),
+            lots        = signal.get("lots", 1),
+            ep          = ep,
+            tgt         = tm.tgt,
+            hsl         = tm.hsl,
+            score       = signal.get("score", 0),
+            zone        = signal.get("zone", ""),
+            bias        = getattr(getattr(state, "base_scanner", None), "_bias", "") or "",
+            dte         = dte_val,
+        )
+    except Exception: pass
+
+    # Start 15-min P&L update thread
+    try:
+        import json as _j
+        def _get_ls():
+            p = os.path.join(DATA_DIR, "live_state.json")
+            if os.path.exists(p):
+                with open(p) as f: return _j.load(f)
+            return None
+        start_pnl_updates(_get_ls, interval_secs=900)
+    except Exception: pass
 
     if PAPER_TRADE:
         print(f"[PAPER TRADE] {option_symbol} entry @ Rs.{ep}")
@@ -760,6 +820,17 @@ def main():
     finally:
         client.stop_websocket()
         print_paper_summary()
+        # Telegram EOD summary
+        try:
+            from export_excel import load_trades
+            today = datetime.today().strftime("%Y%m%d")
+            df_t  = load_trades(today)
+            if not df_t.empty:
+                trades_list = df_t.to_dict("records")
+                alert_eod_summary(trades_list)
+        except Exception as e:
+            logger.debug("EOD telegram summary failed: %s", e)
+
         # Export daily Excel report
         try:
             from export_excel import export_daily_excel
