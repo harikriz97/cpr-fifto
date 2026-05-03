@@ -127,18 +127,34 @@ def fetch():
                           lot_mult=lots_preview,
                           lots=lots_preview * config.INDICES["NIFTY"]["lot_size"])
         import pandas as pd
-        path = os.path.join(os.path.dirname(__file__),'data','live_trades.csv')
+        DATA = os.path.dirname(__file__) + '/data'
         trades = []
         pnl_today = 0
-        if os.path.exists(path):
-            df = pd.read_csv(path)
-            td = df[df['date'].astype(str)==date.today().isoformat()]
-            for _,r in td.iterrows():
-                pnl = float(r.get('pnl',0) or 0)
-                pnl_today += pnl
-                trades.append(dict(sym=str(r.get('symbol',''))[-18:],
-                    ep=r.get('entry_price','--'), pnl=pnl,
-                    reason=str(r.get('exit_reason','open'))))
+        # Read both live_trades.csv (old trader) and paper_trades.csv (paper_trader)
+        for fname, ep_col, sym_col in [
+            ('live_trades.csv',  'entry_price', 'symbol'),
+            ('paper_trades.csv', 'entry_price', 'strategy'),
+        ]:
+            path = os.path.join(DATA, fname)
+            if not os.path.exists(path): continue
+            try:
+                df = pd.read_csv(path)
+                today_str = date.today().strftime('%Y%m%d')
+                mask = df['date'].astype(str).str.replace('-','').str[:8] == today_str
+                td = df[mask]
+                for _,r in td.iterrows():
+                    pnl = float(r.get('pnl',0) or 0)
+                    pnl_today += pnl
+                    signal_name = str(r.get('signal', r.get('source','')))
+                    sym = str(r.get(sym_col,''))[-18:]
+                    trades.append(dict(
+                        sym=sym, ep=r.get(ep_col,'--'), pnl=pnl,
+                        reason=str(r.get('exit_reason','open')),
+                        signal=signal_name,
+                        lots=int(r.get('lots',1) or 1),
+                        score=int(r.get('score',0) or 0),
+                    ))
+            except Exception: pass
         import requests as rq
         try: oa_ok = rq.get("http://127.0.0.1:5000",timeout=2).status_code==200
         except: oa_ok = False
@@ -223,7 +239,9 @@ def fetch():
                     gauges=dict(trend=trend_v,side=side_v,rev=rev_v,wr=wr_v),
                     feats=feats, lots_preview=lots_preview,
                     live_state=live_state,
-                    ts=datetime.now().strftime('%H:%M:%S'))
+                    ts=datetime.now().strftime('%H:%M:%S'),
+                    market_open=market_open,
+                    prev_body=prev_body)
     except Exception as e:
         return {"error": str(e)}
 
@@ -883,13 +901,16 @@ function render(d) {
     tp.innerHTML = `
       <div style="background:#0d1117;border:1px solid #21262d;border-radius:7px;padding:.5rem .6rem;margin-bottom:.3rem">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.35rem">
-          <span style="font-size:.6rem;color:#6e7681">${ls.symbol.slice(-16)}</span>
+          <div>
+            <div style="font-size:.6rem;color:#6e7681">${ls.symbol?ls.symbol.slice(-16):''}</div>
+            ${ls.signal?`<div style="font-size:.58rem;font-weight:700;color:${{THOR:'#58a6ff',HULK:'#3fb950','IRON MAN':'#e3b341',CAPTAIN:'#a78bfa',CRT:'#f97316',MRC:'#ec4899'}[ls.signal]||'#8b949e'}">${ls.signal}</div>`:''}
+          </div>
           <span style="font-size:.6rem;font-family:'JetBrains Mono',monospace;color:${oaPnlCol};font-weight:700">${oaPnlSign}Rs.${oaPnl.toFixed(0)}</span>
         </div>
         <div style="background:#161b22;border:1px solid #21262d;border-radius:5px;padding:.22rem .4rem;text-align:center;margin-bottom:.3rem">
           <span style="font-size:.55rem;color:#6e7681">Lots </span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:700;color:${lotsDisp==195?'#e3b341':'#58a6ff'}">${lotsDisp}</span>
-          <span style="font-size:.55rem;color:#6e7681"> (${lotsDisp==195?'3x':'1x'})</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:700;color:${lotsDisp>=195?'#e3b341':lotsDisp>=130?'#58a6ff':'#8b949e'}">${lotsDisp}</span>
+          <span style="font-size:.55rem;color:#6e7681"> (${ls.score>=4?'3x':ls.score>=2?'2x':'1x'} score=${ls.score||0})</span>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;margin-bottom:.35rem">
           <div style="background:#161b22;border-radius:5px;padding:.25rem .4rem;text-align:center">
@@ -920,6 +941,26 @@ function render(d) {
         ${tierBars}
         <div style="font-size:.55rem;color:#6e7681;text-align:right;margin-top:.2rem">${ls.ts}</div>
       </div>`;
+  } else if(ls && ls.s4_watching){
+    tp.innerHTML = `<div style="background:#0d2137;border:1px solid #1f6feb44;border-radius:7px;padding:.5rem .6rem;text-align:center">
+      <div style="font-size:.65rem;font-weight:700;color:#58a6ff;margin-bottom:.3rem">S4 WATCHING</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#c9d1d9">
+        ${ls.s4_opt||''} ${ls.s4_strike||''}</div>
+      <div style="font-size:.6rem;color:#6e7681;margin-top:.2rem">
+        Pullback window: [${ls.s4_ep?(ls.s4_ep*0.60).toFixed(0):'-'}, ${ls.s4_ep?(ls.s4_ep*0.75).toFixed(0):'-'}]
+      </div>
+      <div style="font-size:.55rem;color:#6e7681;margin-top:.2rem">Watching until 14:00</div>
+    </div>`;
+  } else if(ls && ls.contra_watching){
+    tp.innerHTML = `<div style="background:#271d08;border:1px solid #9e6a0344;border-radius:7px;padding:.5rem .6rem;text-align:center">
+      <div style="font-size:.65rem;font-weight:700;color:#e3b341;margin-bottom:.3rem">CONTRA WATCHING</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#c9d1d9">
+        ${ls.contra_opt||''} entry</div>
+      <div style="font-size:.6rem;color:#6e7681;margin-top:.2rem">
+        Spot at exit: ${ls.contra_spot_at_exit||'--'} | tol: ±30pts
+      </div>
+      <div style="font-size:.55rem;color:#6e7681;margin-top:.2rem">Watching until 14:00</div>
+    </div>`;
   } else {
     tp.innerHTML = '<div style="color:#6e7681;font-size:.7rem;text-align:center;padding:.4rem 0">No active trade</div>';
   }
@@ -931,9 +972,17 @@ function render(d) {
   } else {
     d.trades.forEach(t=>{
       const pc=t.pnl>=0?'#3fb950':'#f85149', ps=t.pnl>=0?'+':'';
+      const agentCol = {'THOR':'#58a6ff','HULK':'#3fb950','IRON MAN':'#e3b341',
+                        'CAPTAIN':'#a78bfa','CRT':'#f97316','MRC':'#ec4899'}[t.signal] || '#8b949e';
       const row=document.createElement('div'); row.className='pos-row';
-      row.innerHTML=`<div><div class="pos-sym">${t.sym}</div><div class="pos-meta">EP:${t.ep} | ${t.reason}</div></div>
-        <div class="pos-pnl" style="color:${pc}">${ps}Rs.${t.pnl.toFixed(0)}</div>`;
+      row.innerHTML=`<div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:.3rem">
+          <span style="font-size:.56rem;font-weight:700;color:${agentCol};white-space:nowrap">${t.signal||''}</span>
+          <span class="pos-sym" style="overflow:hidden;text-overflow:ellipsis">${t.sym}</span>
+        </div>
+        <div class="pos-meta">EP:${t.ep} | ${t.reason} | ${t.lots}L${t.score?(' s'+t.score):''}</div>
+      </div>
+      <div class="pos-pnl" style="color:${pc}">${ps}Rs.${t.pnl.toFixed(0)}</div>`;
       pl.appendChild(row);
     });
   }
