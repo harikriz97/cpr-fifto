@@ -37,7 +37,8 @@ NFO  = "NFO"
 BSE  = "BSE"
 
 # ── Instrument tokens (NSE segment) ───────────────────────────────────────────
-NIFTY_SPOT_TOKEN    = "26000"   # NIFTY 50 index, NSE
+NIFTY_SPOT_TOKEN    = "99926000"  # NIFTY 50 — historical OHLC (getCandleData)
+NIFTY_WS_TOKEN      = "26000"     # NIFTY 50 — WebSocket real-time ticks
 NIFTY_FUT_SYMBOL    = "NIFTY"   # Nifty near-month futures, NFO
 
 # WebSocket modes
@@ -166,12 +167,21 @@ class AngelClient:
         resp = self.api.getCandleData(params)
         if resp.get("status") is False:
             raise RuntimeError(f"getCandleData failed: {resp.get('message')}")
+        data = resp.get("data") or []
+        if not data:
+            raise RuntimeError("getCandleData returned empty data")
         rows = []
-        for candle in resp["data"]:
+        for candle in data:
             # candle = [timestamp_str, open, high, low, close, volume]
-            ts = pd.to_datetime(candle[0]).strftime("%Y%m%d")
-            rows.append({"date": ts, "open": candle[1], "high": candle[2],
-                         "low": candle[3], "close": candle[4]})
+            try:
+                ts = pd.to_datetime(candle[0]).strftime("%Y%m%d")
+                rows.append({"date": ts, "open": float(candle[1]),
+                             "high": float(candle[2]), "low": float(candle[3]),
+                             "close": float(candle[4])})
+            except Exception:
+                continue
+        if not rows:
+            raise RuntimeError("No valid candles parsed from response")
         df = pd.DataFrame(rows).sort_values("date").tail(n_days).reset_index(drop=True)
         return df
 

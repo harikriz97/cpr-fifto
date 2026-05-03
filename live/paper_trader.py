@@ -35,7 +35,7 @@ from config import (
     PAPER_TRADE, LOT_SIZE, STRIKE_INT, EOD_EXIT_TIME,
     IB_END, LOG_CSV, STATE_FILE, OHLC_CACHE,
 )
-from angel_client import AngelClient, NIFTY_SPOT_TOKEN, NSE, NFO
+from angel_client import AngelClient, NIFTY_SPOT_TOKEN, NIFTY_WS_TOKEN, NSE, NFO
 from indicators  import (
     compute_cpr, compute_camarilla, compute_mrc_levels,
     compute_ema20, compute_ib, build_ohlc_from_ticks,
@@ -438,13 +438,13 @@ def main():
     # ── Start WebSocket for NIFTY spot ─────────────────────────────────────────
     def tick_router(message):
         token = message.get("token", "")
-        if token == NIFTY_SPOT_TOKEN:
+        if token in (NIFTY_SPOT_TOKEN, NIFTY_WS_TOKEN):
             on_spot_tick(message, state, client)
         elif state.option_token and token == state.option_token:
             on_option_tick(message, state)
 
     client.start_websocket(
-        token_list=[{"exchangeType": 1, "tokens": [NIFTY_SPOT_TOKEN]}],
+        token_list=[{"exchangeType": 1, "tokens": [NIFTY_WS_TOKEN]}],
         on_tick_callback=tick_router,
     )
 
