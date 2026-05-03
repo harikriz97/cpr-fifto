@@ -226,57 +226,64 @@ class AngelClient:
         """Convenience: get NIFTY 50 index LTP."""
         return self.get_ltp(NSE, "Nifty 50", NIFTY_SPOT_TOKEN)
 
-    # ── WebSocket ──────────────────────────────────────────────────────────────
+    # ── WebSocket / Polling ───────────────────────────────────────────────────
     def start_websocket(self, token_list: list, on_tick_callback,
-                        mode: int = MODE_LTP):
+                        mode: int = MODE_LTP, poll_interval: float = 1.0):
         """
-        Subscribe to real-time ticks via WebSocket.
-
-        token_list: list of dicts e.g.
-          [{"exchangeType": 1, "tokens": ["26000"]},     # NSE NIFTY spot
-           {"exchangeType": 2, "tokens": ["35003"]}]     # NFO option token
-
-        exchangeType: 1=NSE, 2=NFO, 3=BSE, 4=BFO
-
-        on_tick_callback(tick_data): called on each message.
-        tick_data is a dict with keys:
-          token, last_traded_price (in paise → divide by 100), etc.
+        Stream real-time NIFTY spot ticks.
+        Tries SmartWebSocketV2 first; falls back to 1-second REST polling.
+        on_tick_callback receives: {"token": str, "last_traded_price": float}
         """
         if not SMARTAPI_AVAILABLE:
             raise ImportError("smartapi-python not installed.")
-        from SmartApi.SmartWebSocketV2 import SmartWebSocketV2
 
-        self._tick_cb = on_tick_callback
+        # ── Try WebSocket V2 ──────────────────────────────────────────────────
+        try:
+            from SmartApi.SmartWebSocketV2 import SmartWebSocketV2
+            self._ws = SmartWebSocketV2(
+                self.auth_token, self.api_key,
+                self.client_id, self.feed_token
+            )
 
-        self._ws = SmartWebSocketV2(
-            self.auth_token, self.api_key,
-            self.client_id, self.feed_token
-        )
+            def _on_data(wsapp, message):
+                try: on_tick_callback(message)
+                except Exception as e: logger.error("Tick callback error: %s", e)
 
-        def _on_data(wsapp, message):
-            try:
-                on_tick_callback(message)
-            except Exception as e:
-                logger.error(f"Tick callback error: {e}")
+            def _on_open(wsapp):
+                logger.info("WebSocket V2 connected, subscribing...")
+                self._ws.subscribe("nifty_live", mode, token_list)
 
-        def _on_open(wsapp):
-            logger.info("WebSocket connected, subscribing...")
-            self._ws.subscribe("nifty_live", mode, token_list)
+            self._ws.on_data  = _on_data
+            self._ws.on_open  = _on_open
+            self._ws.on_error = lambda ws, e: logger.error("WS error: %s", e)
+            self._ws.on_close = lambda ws: logger.info("WS closed")
 
-        def _on_error(wsapp, error):
-            logger.error(f"WebSocket error: {error}")
+            t = threading.Thread(target=self._ws.connect, daemon=True)
+            t.start()
+            logger.info("WebSocket V2 started")
+            return
 
-        def _on_close(wsapp):
-            logger.info("WebSocket closed")
+        except (ImportError, Exception) as e:
+            logger.warning("WebSocket V2 unavailable (%s) — using polling", e)
 
-        self._ws.on_data  = _on_data
-        self._ws.on_open  = _on_open
-        self._ws.on_error = _on_error
-        self._ws.on_close = _on_close
+        # ── Fallback: polling every poll_interval seconds ─────────────────────
+        logger.info("Starting REST polling (%.1fs interval)", poll_interval)
 
-        # Run WebSocket in background thread
-        t = threading.Thread(target=self._ws.connect, daemon=True)
+        def _poll():
+            while True:
+                try:
+                    spot = self.get_nifty_spot()
+                    on_tick_callback({
+                        "token": NIFTY_WS_TOKEN,
+                        "last_traded_price": spot,   # already in points, not paise
+                    })
+                except Exception as e:
+                    logger.warning("Poll error: %s", e)
+                time.sleep(poll_interval)
+
+        t = threading.Thread(target=_poll, daemon=True)
         t.start()
+        logger.info("REST polling started")
         logger.info("WebSocket thread started")
 
     def add_subscription(self, token_list: list, mode: int = MODE_LTP):
