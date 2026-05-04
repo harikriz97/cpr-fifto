@@ -427,6 +427,9 @@ def on_option_tick(message: dict, state: DayState, client: AngelClient):
         state.trade_entered = False
         _clear_live_state()
         stop_pnl_updates()
+        if state.option_token:
+            client.unsubscribe_option(state.option_token)
+            state.option_token = None
         logger.info(
             f"Trade done. P&L: Rs.{result['pnl']:,.0f} | exit={result['exit_reason']}"
         )
@@ -669,6 +672,9 @@ def _enter_trade(signal: dict, state: DayState,
     state.active_trade  = TradeManager(signal, ep)
     state.trade_entered = True
     state.option_token  = option_token
+
+    # Subscribe option for polling/WebSocket ticks
+    client.subscribe_option(option_token, option_symbol)
 
     tm = state.active_trade
     logger.info(

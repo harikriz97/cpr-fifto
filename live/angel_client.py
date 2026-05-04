@@ -289,23 +289,53 @@ class AngelClient:
 
         # ── Fallback: polling every poll_interval seconds ─────────────────────
         logger.info("Starting REST polling (%.1fs interval)", poll_interval)
+        self._option_tokens: dict = {}   # token → symbol (populated by subscribe_option)
 
         def _poll():
             while True:
+                # Spot tick
                 try:
                     spot = self.get_nifty_spot()
                     on_tick_callback({
                         "token": NIFTY_WS_TOKEN,
-                        "last_traded_price": spot,   # already in points, not paise
+                        "last_traded_price": spot,
                     })
                 except Exception as e:
                     logger.warning("Poll error: %s", e)
+
+                # Option ticks (for each subscribed option token)
+                for opt_token, opt_sym in list(self._option_tokens.items()):
+                    try:
+                        ltp = self.get_ltp(NFO, opt_sym, opt_token)
+                        if ltp and ltp > 0:
+                            on_tick_callback({
+                                "token": opt_token,
+                                "last_traded_price": ltp,
+                            })
+                    except Exception:
+                        pass
+
                 time.sleep(poll_interval)
 
         t = threading.Thread(target=_poll, daemon=True)
         t.start()
-        logger.info("REST polling started")
+        logger.info("REST polling started (spot + options)")
         logger.info("WebSocket thread started")
+
+    def subscribe_option(self, token: str, symbol: str):
+        """Register option token for polling (fallback) or WebSocket subscription."""
+        if self._ws:
+            self._ws.subscribe("option_sub", MODE_LTP,
+                               [{"exchangeType": 2, "tokens": [token]}])
+        # Also register for polling fallback
+        if hasattr(self, '_option_tokens'):
+            self._option_tokens[token] = symbol
+            logger.info("Option subscribed: %s (%s)", symbol, token)
+
+    def unsubscribe_option(self, token: str):
+        """Remove option from polling/WebSocket."""
+        if hasattr(self, '_option_tokens'):
+            self._option_tokens.pop(token, None)
 
     def add_subscription(self, token_list: list, mode: int = MODE_LTP):
         """Subscribe additional tokens after WebSocket is already running."""
