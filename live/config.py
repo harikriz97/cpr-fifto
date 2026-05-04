@@ -31,7 +31,9 @@ MRC_SCAN_END     = "12:00:00"
 
 # ── Score7 lot sizing ─────────────────────────────────────────────────────────
 SCORE_LOT_MAP = {0: 1, 1: 1, 2: 2, 3: 2, 4: 3, 5: 3, 6: 0, 7: 3}
-# score 6 → 0 = SKIP TRADE (net negative over 5yr backtest)
+# score 6 → 0 = SKIP (post-hoc quality cut from script 127 analysis)
+# NOTE: 56_combined_full_backtest.py gives score==6 → 3 lots (no skip)
+# Script 127 proved score==6 is net negative over 5yr → skip kept as improvement
 
 # ── MRC lot override ──────────────────────────────────────────────────────────
 MRC_PE_LOTS = 2

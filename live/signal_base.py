@@ -209,7 +209,7 @@ class BaseScanner:
             t, p = _detect_touch(df, self.levels["cam_h3"], "up")
             if t:
                 self._ironman_done = True
-                if IRONMAN_SKIP[0] <= t <= IRONMAN_SKIP[1]:
+                if IRONMAN_SKIP[0] <= t < IRONMAN_SKIP[1]:  # backtest: excludes 09:30:00
                     logger.info("IRON MAN: skip window %s", t)
                 else:   # Bug2 fix: no basis filter for CE sells
                     et = _entry_after(t)
