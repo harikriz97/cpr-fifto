@@ -144,7 +144,7 @@ class AngelClient:
         Returns e.g. 'NIFTY29MAY2026CE23000'
         """
         dt = datetime.strptime(expiry_yyyymmdd, "%Y%m%d")
-        expiry_str = dt.strftime("%d%b%Y").upper()   # '29MAY2026'
+        expiry_str = dt.strftime("%d%b%y").upper()   # '29MAY26' (2-digit year)
         return f"NIFTY{expiry_str}{opt_type}{strike}"
 
     # ── Historical OHLC ────────────────────────────────────────────────────────

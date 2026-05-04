@@ -354,14 +354,12 @@ def on_spot_tick(message: dict, state: DayState, client: AngelClient):
         if state.crt_scanner and not state.base_signal_fired:
             sig = state.crt_scanner.update(ticks_df)
             if sig and current_time >= sig["entry_time"]:
-                # Blank filter: skip CRT CE on trend-up days (proxy: bull bias + open above R1)
+                state.crt_scanner.mark_done()   # mark done IMMEDIATELY to prevent spam
                 bs = getattr(state, 'base_scanner', None)
                 _TREND_UP_ZONES = ('r1_to_r2', 'r2_to_r3', 'r3_to_r4', 'above_r4')
                 if (bs and getattr(bs, '_bias', None) == 'bull'
                         and getattr(bs, '_zone', '') in _TREND_UP_ZONES):
-                    logger.info("BlankFilter: skip CRT CE — trend-up day (bias=bull zone=%s)",
-                                bs._zone)
-                    state.crt_scanner.mark_done()
+                    logger.info("BlankFilter: skip CRT CE — trend-up day zone=%s", bs._zone)
                 else:
                     _enter_trade(sig, state, client, current_time)
                 return
@@ -370,14 +368,12 @@ def on_spot_tick(message: dict, state: DayState, client: AngelClient):
         if state.mrc_scanner and not state.base_signal_fired:
             sig = state.mrc_scanner.update(ticks_df)
             if sig and current_time >= sig["entry_time"]:
-                # Blank filter: skip MRC PE on normal-down days (proxy: bear bias + open below S1)
+                state.mrc_scanner.mark_done()   # mark done IMMEDIATELY to prevent spam
                 bs = getattr(state, 'base_scanner', None)
                 _TREND_DN_ZONES = ('s1_to_s2', 's2_to_s3', 's3_to_s4', 'below_s4')
                 if (bs and getattr(bs, '_bias', None) == 'bear'
                         and getattr(bs, '_zone', '') in _TREND_DN_ZONES):
-                    logger.info("BlankFilter: skip MRC PE — normal-down day (bias=bear zone=%s)",
-                                bs._zone)
-                    state.mrc_scanner.mark_done()
+                    logger.info("BlankFilter: skip MRC PE — normal-down day zone=%s", bs._zone)
                 else:
                     _enter_trade(sig, state, client, current_time)
                 return
