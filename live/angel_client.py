@@ -144,8 +144,8 @@ class AngelClient:
         Returns e.g. 'NIFTY29MAY2026CE23000'
         """
         dt = datetime.strptime(expiry_yyyymmdd, "%Y%m%d")
-        expiry_str = dt.strftime("%d%b%y").upper()   # '29MAY26' (2-digit year)
-        return f"NIFTY{expiry_str}{opt_type}{strike}"
+        expiry_str = dt.strftime("%d%b%y").upper()   # '05MAY26'
+        return f"NIFTY{expiry_str}{strike}{opt_type}"  # NIFTY05MAY2624200PE
 
     # ── Historical OHLC ────────────────────────────────────────────────────────
     def get_daily_ohlc(self, symbol: str, token: str, exchange: str,
