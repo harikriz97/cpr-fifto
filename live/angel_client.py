@@ -129,7 +129,12 @@ class AngelClient:
                  (df["instrumenttype"].isin(["OPTIDX"]))].copy()
         nfo["expiry_dt"] = pd.to_datetime(nfo["expiry"], format="%d%b%Y",
                                           errors="coerce").dt.strftime("%Y%m%d")
-        upcoming = nfo[nfo["expiry_dt"] >= today]["expiry_dt"].dropna().unique()
+        # Skip today's expiry (DTE=0 — options expire today, too risky)
+        tomorrow = (datetime.today() + pd.Timedelta(days=1)).strftime("%Y%m%d")
+        upcoming = nfo[nfo["expiry_dt"] >= tomorrow]["expiry_dt"].dropna().unique()
+        if len(upcoming) == 0:
+            # Fallback: include today if nothing else found
+            upcoming = nfo[nfo["expiry_dt"] >= today]["expiry_dt"].dropna().unique()
         if len(upcoming) == 0:
             raise ValueError("No upcoming NIFTY expiries found in scrip master")
         return sorted(upcoming)[0]
