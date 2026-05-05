@@ -491,7 +491,7 @@ canvas.g{display:block;flex-shrink:0}
           <span style="font-size:.55rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#6e7681">&#9679; Strategy Compass</span>
           <span style="font-size:.67rem;color:#c9d1d9" id="compass-title">--</span>
         </div>
-        <div id="gauges-row" style="display:flex;align-items:stretch;flex:1;min-height:0"></div>
+        <div id="gauges-row" style="display:grid;grid-template-columns:repeat(4,1fr);flex:1;align-items:stretch"></div>
       </div>
 
     </div>
@@ -552,7 +552,7 @@ canvas.g{display:block;flex-shrink:0}
 const ZONES=['above_r4','r3_to_r4','r2_to_r3','r1_to_r2','pdh_to_r1','tc_to_pdh','within_cpr','pdl_to_bc','pdl_to_s1','s1_to_s2','s2_to_s3','s3_to_s4','below_s4'];
 
 // Chart setup
-let _chart = null, _candleSeries = null, _priceLines = [];
+let _chart = null, _candleSeries = null, _priceLines = [], _chartInitialized = false;
 
 const IST_OFFSET = 5.5 * 3600; // IST = UTC+5:30 in seconds
 
@@ -578,10 +578,12 @@ function initChart() {
     },
     handleScroll: true, handleScale: true,
   });
-  _candleSeries = _chart.addCandlestickSeries({
-    upColor: '#3fb950', downColor: '#f85149',
-    borderUpColor: '#3fb950', borderDownColor: '#f85149',
-    wickUpColor: '#3fb950', wickDownColor: '#f85149',
+  _candleSeries = _chart.addLineSeries({
+    color: '#58a6ff', lineWidth: 2,
+    crosshairMarkerVisible: true,
+    crosshairMarkerRadius: 4,
+    lastValueVisible: true,
+    priceLineVisible: false,
   });
   new ResizeObserver(() => {
     const c = document.getElementById('chart-container');
@@ -590,7 +592,8 @@ function initChart() {
 }
 
 function clearPriceLines() {
-  _priceLines.forEach(pl => { try { _candleSeries.removePriceLine(pl); } catch(e){} });
+  if (_candleSeries)
+    _priceLines.forEach(pl => { try { _candleSeries.removePriceLine(pl); } catch(e){} });
   _priceLines = [];
 }
 
@@ -598,25 +601,36 @@ function updateChart(d) {
   if (!_chart) initChart();
   if (!_chart) return;
 
-  // Candles — time is already Unix UTC from Python
+  // Line chart — use close price (or spot for latest bar)
   if (d.candles && d.candles.length > 0) {
     const data = d.candles
       .filter(c => typeof c.time === 'number' && !isNaN(c.time))
-      .sort((a,b) => a.time - b.time);
-    if (data.length) _candleSeries.setData(data);
+      .sort((a,b) => a.time - b.time)
+      .map(c => ({ time: c.time, value: c.close }));  // line series needs {time, value}
+    if (data.length) {
+      _candleSeries.setData(data);
+      // Auto zoom-out on first load only; subsequent refreshes keep user's zoom
+      if (!_chartInitialized) {
+        _chart.timeScale().fitContent();
+        _chartInitialized = true;
+      } else {
+        // Just scroll to latest without resetting zoom
+        _chart.timeScale().scrollToRealTime();
+      }
+    }
   }
 
   // Remove ALL old price lines before redrawing
   clearPriceLines();
 
-  // Spot line
+  // Spot line (white dashed)
   _priceLines.push(_candleSeries.createPriceLine({
     price: d.spot, color: '#ffffff', lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dashed,
     axisLabelVisible: true, title: 'SPOT'
   }));
 
-  // Pivot levels — one line each, no duplicates
+  // Pivot levels
   d.levels.forEach(lv => {
     _priceLines.push(_candleSeries.createPriceLine({
       price: lv.v, color: lv.c, lineWidth: 1,
@@ -626,52 +640,31 @@ function updateChart(d) {
   });
 
   document.getElementById('chart-spot').textContent = d.spot.toLocaleString('en-IN',{minimumFractionDigits:2});
-  _chart.timeScale().fitContent();
 }
 
 function makeGaugeSVG(label, val, sub, color) {
-  // SVG semicircle gauge — no canvas cut-off issues
-  const pct = Math.min(Math.max(val, 0), 100) / 100;
-  const cx=60, cy=58, r=44, sw=8;
-  // Arc end point calculation
-  const ang = Math.PI * pct;
-  const ex = cx - r * Math.cos(ang);
-  const ey = cy - r * Math.sin(ang);
-  const largeArc = pct > 0.5 ? 1 : 0;
-  const arcPath = pct === 0 ? '' :
-    `M${cx-r},${cy} A${r},${r} 0 ${largeArc},1 ${ex.toFixed(2)},${ey.toFixed(2)}`;
-  // Needle
-  const nang = Math.PI - Math.PI*pct;
-  const nx = (cx + r*0.72*Math.cos(nang)).toFixed(1);
-  const ny = (cy - r*0.72*Math.sin(nang)).toFixed(1);
+  const pct  = Math.min(Math.max(val, 0), 100);
+  const w    = pct;   // bar width %
+  const tier = pct >= 65 ? 'high' : pct >= 35 ? 'mid' : 'low';
+  const alpha= pct >= 65 ? '33' : pct >= 35 ? '22' : '15';
 
   const div = document.createElement('div');
-  div.style.cssText = `display:flex;flex-direction:column;align-items:center;justify-content:center;
-    flex:1;padding:.35rem .3rem;border-right:1px solid #21262d;gap:.1rem`;
+  div.style.cssText = `flex:1;padding:.45rem .65rem;border-right:1px solid #21262d;
+    display:flex;flex-direction:column;justify-content:center;gap:.25rem;min-width:0`;
   div.innerHTML = `
-    <svg viewBox="0 0 120 65" width="110" height="62" style="display:block;overflow:visible">
-      <defs>
-        <filter id="glow-${label}" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="2.5" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-      </defs>
-      <!-- Track -->
-      <path d="M${cx-r},${cy} A${r},${r} 0 0,1 ${cx+r},${cy}"
-        fill="none" stroke="#21262d" stroke-width="${sw}" stroke-linecap="round"/>
-      <!-- Fill -->
-      ${arcPath ? `<path d="${arcPath}" fill="none" stroke="${color}" stroke-width="${sw}"
-        stroke-linecap="round" filter="url(#glow-${label})" opacity="0.9"/>` : ''}
-      <!-- Needle -->
-      <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}"
-        stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity="0.9"/>
-      <!-- Center dot -->
-      <circle cx="${cx}" cy="${cy}" r="4.5" fill="#161b22" stroke="${color}" stroke-width="2"/>
-      <circle cx="${cx}" cy="${cy}" r="2" fill="#ffffff"/>
-    </svg>
-    <div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.08em;color:#6e7681;font-weight:700;line-height:1">${label}</div>
-    <div style="font-family:'JetBrains Mono',monospace;font-size:1.15rem;font-weight:700;color:${color};line-height:1.1">${val}%</div>
-    <div style="font-size:.53rem;color:#6e7681;line-height:1">${sub}</div>`;
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.1rem">
+      <span style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+        color:#8b949e;white-space:nowrap">${label}</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:.9rem;font-weight:700;
+        color:${color}">${val}%</span>
+    </div>
+    <div style="background:#0d1117;border-radius:4px;height:6px;overflow:hidden;position:relative">
+      <div style="position:absolute;top:0;left:0;height:100%;width:${w}%;
+        background:${color};border-radius:4px;
+        box-shadow:0 0 8px ${color}88;
+        transition:width .5s ease"></div>
+    </div>
+    <div style="font-size:.52rem;color:#6e7681">${sub}</div>`;
   return div;
 }
 
