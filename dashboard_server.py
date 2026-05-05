@@ -201,32 +201,54 @@ def fetch():
                     })
         except: pass
 
-        # Read live trade state from trader.py
+        # Read live trade state — from file OR build from OpenAlgo if file missing
         live_state = None
         try:
             import json as _json
             sp = os.path.join(os.path.dirname(__file__), 'data', 'live_state.json')
             if os.path.exists(sp):
                 with open(sp) as f: live_state = _json.load(f)
-            # Enrich with OpenAlgo live position data (ground truth for lots/pnl)
-            if live_state and live_state.get('status') == 'open':
-                try:
-                    oa_resp = rq.post(f"{config.OPENALGO_HOST}/api/v1/positionbook",
-                        json={'apikey': config.OPENALGO_API_KEY}, timeout=3)
-                    oa_pos = oa_resp.json().get('data', [])
-                    sym = live_state.get('symbol', '')
-                    for p in oa_pos:
-                        if p.get('symbol') == sym and int(p.get('quantity', 0)) < 0:
-                            actual_lots = abs(int(p['quantity']))
-                            ltp = float(p.get('ltp', live_state.get('current', 0)))
-                            ep  = float(p.get('average_price', live_state.get('entry', 0)))
-                            live_state['lots']    = actual_lots
-                            live_state['current'] = ltp
-                            live_state['upnl']    = round((ep - ltp) * actual_lots, 0)
-                            live_state['entry']   = ep
-                            live_state['oa_pnl']  = round(float(p.get('pnl', 0)), 0)
-                            break
-                except: pass
+
+            # Always enrich/build from OpenAlgo (single source of truth)
+            oa_resp = rq.post(f"{config.OPENALGO_HOST}/api/v1/positionbook",
+                json={'apikey': config.OPENALGO_API_KEY}, timeout=3)
+            oa_pos = oa_resp.json().get('data', [])
+            short_pos = [p for p in oa_pos if int(p.get('quantity',0)) < 0]
+
+            if short_pos:
+                p = short_pos[0]
+                ep    = float(p.get('average_price', 0))
+                ltp   = float(p.get('ltp', ep))
+                sym   = str(p.get('symbol', ''))
+                qty   = abs(int(p.get('quantity', 65)))
+                lots  = qty // 65
+                oa_pnl= round(float(p.get('pnl', 0)), 0)
+                decay = round((ep - ltp) / ep * 100, 1) if ep > 0 else 0
+                upnl  = round((ep - ltp) * qty, 0)
+                # Build live_state from OpenAlgo if file missing
+                if not live_state:
+                    live_state = dict(
+                        symbol=sym, status='open',
+                        entry=ep, current=ltp, spot=spot or 0,
+                        sl=round(ep * 2.0, 2), hard_sl=round(ep * 2.0, 2),
+                        target=round(ep * 0.80, 2),
+                        trail_tier=0, trail_label='None',
+                        decay_pct=decay, max_decay_pct=decay,
+                        upnl=upnl, lots=lots, score=0,
+                        signal='', strategy='', s4_watching=False,
+                        contra_watching=False, ts=datetime.now().strftime('%H:%M:%S'),
+                        oa_pnl=oa_pnl
+                    )
+                else:
+                    # Enrich existing live_state with OA data
+                    live_state['lots']    = lots
+                    live_state['current'] = ltp
+                    live_state['upnl']    = upnl
+                    live_state['entry']   = ep
+                    live_state['oa_pnl']  = oa_pnl
+            elif live_state:
+                live_state = None  # position closed, clear state
+
         except: pass
 
         # Expiry display format (YYYYMMDD → DDMMMYY for display)
