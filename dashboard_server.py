@@ -241,7 +241,8 @@ def fetch():
                     live_state=live_state,
                     ts=datetime.now().strftime('%H:%M:%S'),
                     market_open=market_open,
-                    prev_body=prev_body)
+                    prev_body=prev_body,
+                    basis_pts=0)
     except Exception as e:
         return {"error": str(e)}
 
@@ -499,6 +500,12 @@ canvas.g{display:block;flex-shrink:0}
 
   <div id="rpanel">
     <div class="rp-sec">
+      <div class="rp-lbl">&#9889; Avengers Status</div>
+      <div id="agent-status-panel">
+        <div style="color:#6e7681;font-size:.68rem;text-align:center">Loading...</div>
+      </div>
+    </div>
+    <div class="rp-sec">
       <div class="rp-lbl">Strike Selection</div>
       <div class="strike-card">
         <div class="sk-type" id="rp-stype">--</div>
@@ -669,11 +676,13 @@ function makeGaugeSVG(label, val, sub, color) {
 }
 
 function sigBadge(ti, signal) {
-  if(!signal) return '<span class="badge b-gray">NO SIGNAL &rarr; Intraday v2</span>';
-  if(ti && ti.skip) return '<span class="badge b-yellow">DTE SKIP &rarr; Intraday v2</span>';
+  if(!signal) return '<span class="badge b-gray">&#128269; Watching Intraday</span>';
+  if(ti && ti.skip) return '<span class="badge b-yellow">&#8987; DTE Skip &#8594; Intraday</span>';
   const sc=signal==='PE'?'#3fb950':'#f85149';
   const bg=signal==='PE'?'#0d2818':'#2d1111';
-  return `<span style="background:${bg};color:${sc};border:1px solid ${sc};padding:.15rem .7rem;border-radius:20px;font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700">SELL ${signal}</span>`;
+  // Marvel agent name for THOR signals
+  const agentName = ti ? (ti.strategy==='v17a'?'&#9889; THOR':(ti.strategy==='cam_l3'?'&#128154; HULK':(ti.strategy==='cam_h3'?'&#129689; IRON MAN':'&#128307; CAPTAIN'))):'&#9889; THOR';
+  return `<span style="background:${bg};color:${sc};border:1px solid ${sc};padding:.15rem .75rem;border-radius:20px;font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700">${agentName} SELL ${signal}</span>`;
 }
 
 function render(d) {
@@ -807,6 +816,52 @@ function render(d) {
     {label:'Reversal',val:d.gauges.rev,  sub:'snap-back risk',color:'#e53935'},
     {label:'Win Rate',val:d.gauges.wr,   sub:'backtest est.', color:'#43a047'},
   ].forEach(g => gr.appendChild(makeGaugeSVG(g.label, g.val, g.sub, g.color)));
+
+  // Avengers agent status panel
+  const asp = document.getElementById('agent-status-panel');
+  if(asp){
+    const basis = d.feats ? d.basis_pts : 85;
+    const zone  = d.zone || '';
+    const isPreMkt = zone === 'pre_market';
+    const ls = d.live_state;
+    const activeAgent = ls && ls.status==='open' ? ls.signal : null;
+
+    const AGENTS = [
+      { name:'THOR',        emoji:'⚡', strategy:'v17a',    color:'#58a6ff' },
+      { name:'HULK',        emoji:'💚', strategy:'cam_l3',  color:'#3fb950' },
+      { name:'IRON MAN',    emoji:'🟡', strategy:'cam_h3',  color:'#e3b341' },
+      { name:'CAPTAIN',     emoji:'🟣', strategy:'captain', color:'#a78bfa' },
+      { name:'SPIDER-MAN',  emoji:'🟠', strategy:'crt',     color:'#f97316' },
+      { name:'BLACK WIDOW', emoji:'🩷', strategy:'mrc',     color:'#ec4899' },
+      { name:'HAWKEYE',     emoji:'🎯', strategy:'s4',      color:'#06b6d4' },
+    ];
+
+    function agentStatus(a){
+      if(activeAgent && activeAgent.includes(a.name)) return ['TRADING','#3fb950'];
+      if(isPreMkt) return ['PRE-MKT','#6e7681'];
+      if(a.name==='THOR' && d.feats && d.prev_body<=0.10) return ['DOJI','#6e7681'];
+      if(a.name==='HAWKEYE') return [ls&&ls.s4_watching?'WATCHING':'STANDBY','#06b6d4'];
+      if(['HULK','IRON MAN','CAPTAIN'].includes(a.name)){
+        const isPE = (a.name==='HULK'||a.name==='CAPTAIN');
+        if(isPE && d.feats && 50<=d.basis_pts&&d.basis_pts<=100) return ['BLOCKED','#f85149'];
+        return ['WATCHING','#58a6ff'];
+      }
+      if(a.name==='SPIDER-MAN') return [d.feats&&d.basis_pts>100?'BLOCKED':'WATCHING','#58a6ff'];
+      if(a.name==='BLACK WIDOW') return ['WATCHING','#58a6ff'];
+      return ['WATCHING','#58a6ff'];
+    }
+
+    asp.innerHTML = AGENTS.map(a=>{
+      const [status,sc] = agentStatus(a);
+      const bg = status==='TRADING'?'#0d2818':status==='BLOCKED'?'#2d1111':status==='DOJI'?'#161b22':'#0d1117';
+      return `<div style="display:flex;align-items:center;justify-content:space-between;
+        padding:.28rem .4rem;border-radius:5px;background:${bg};margin-bottom:.2rem">
+        <span style="font-size:.65rem;font-weight:600;color:${a.color}">${a.emoji} ${a.name}</span>
+        <span style="font-size:.58rem;font-weight:700;font-family:'JetBrains Mono',monospace;
+          color:${sc}">${status}</span>
+      </div>`;
+    }).join('');
+  }
 
   // Right panel
   const rp=d.ti;
