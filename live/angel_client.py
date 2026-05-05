@@ -74,7 +74,7 @@ class AngelClient:
         """Login to Angel One. Must be called before any other method."""
         if not SMARTAPI_AVAILABLE:
             raise ImportError("smartapi-python not installed. Run: pip install smartapi-python pyotp")
-        self.api = SmartConnect(api_key=self.api_key)
+        self.api = SmartConnect(api_key=self.api_key, timeout=15)  # 7s default → 15s
         totp = pyotp.TOTP(self.totp_secret).now()
         data = self.api.generateSession(self.client_id, self.password, totp)
         if data["status"] is False:
@@ -215,12 +215,22 @@ class AngelClient:
         return df.reset_index(drop=True)
 
     # ── LTP ────────────────────────────────────────────────────────────────────
-    def get_ltp(self, exchange: str, tradingsymbol: str, token: str) -> float:
-        """Get last traded price for a single instrument."""
-        resp = self.api.ltpData(exchange, tradingsymbol, token)
-        if resp.get("status") is False:
-            raise RuntimeError(f"ltpData failed for {tradingsymbol}: {resp.get('message')}")
-        return float(resp["data"]["ltp"])
+    def get_ltp(self, exchange: str, tradingsymbol: str, token: str,
+               retries: int = 2) -> float:
+        """Get last traded price. Retries once on timeout."""
+        for attempt in range(retries):
+            try:
+                resp = self.api.ltpData(exchange, tradingsymbol, token)
+                if resp.get("status") is False:
+                    raise RuntimeError(f"ltpData failed for {tradingsymbol}: {resp.get('message')}")
+                return float(resp["data"]["ltp"])
+            except RuntimeError:
+                raise
+            except Exception as e:
+                if attempt < retries - 1:
+                    time.sleep(1)
+                else:
+                    raise
 
     def get_nifty_spot(self) -> float:
         """Convenience: get NIFTY 50 index LTP."""

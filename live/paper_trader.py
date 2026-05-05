@@ -805,6 +805,7 @@ def main():
     client.start_websocket(
         token_list=[{"exchangeType": 1, "tokens": [NIFTY_WS_TOKEN]}],
         on_tick_callback=tick_router,
+        poll_interval=2.0,   # 2s polling: 30 calls/min vs 60 — stays well under rate limit
     )
 
     logger.info("WebSocket running. Monitoring market...")
