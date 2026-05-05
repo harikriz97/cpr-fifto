@@ -244,13 +244,29 @@ def on_ib_confirmed(client: AngelClient, state: DayState):
         f"low={state.ib.get('ib_low')} range={state.ib.get('ib_range')}"
     )
 
-    # today_open: first tick or live spot fallback
-    if not ticks_df.empty:
+    # today_open: USE 09:15 OPEN FROM OHLC CACHE — consistent across restarts
+    # This ensures zone/signal never changes even if trader is restarted mid-day
+    today_open_fixed = None
+    try:
+        import pandas as _pd2
+        ohlc_df = _pd2.read_csv(OHLC_CACHE)
+        today_str = datetime.today().strftime("%Y%m%d")
+        today_bar = ohlc_df[ohlc_df["date"].astype(str).str.replace(".0","",regex=False).str[:8] == today_str]
+        if not today_bar.empty:
+            today_open_fixed = float(today_bar.iloc[0]["open"])
+            logger.info(f"today_open from OHLC cache (09:15 open): {today_open_fixed:.2f}")
+    except Exception:
+        pass
+
+    if today_open_fixed:
+        today_open = today_open_fixed   # STABLE across restarts
+    elif not ticks_df.empty:
         today_open = float(ticks_df["price"].iloc[0])
+        logger.info(f"today_open from first tick: {today_open:.2f}")
     else:
         try:
             today_open = client.get_nifty_spot()
-            logger.info(f"No ticks yet — using live spot as today_open: {today_open:.2f}")
+            logger.warning(f"today_open from CURRENT spot (restart risk): {today_open:.2f}")
         except Exception:
             today_open = float(state.ema20 or 0.0)
 
